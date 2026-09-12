@@ -7,7 +7,7 @@ import os
 
 MY_DISCORD_ID = 860215082541514752  
 ALLOWED_ROLE_IDS = [1541583386441809950, 1544552950977011723]  
-BOT_TOKEN = os.environ.get("MTU0ODM5OTIyNjEyMjI4MDk3MA.GzdCjM.SKoG7WMqnBLymZBibewf-_6OOJf81-Cl8kQ5Go")
+BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
 intents.message_content = True  
