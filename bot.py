@@ -27,6 +27,7 @@ keep_alive()
 MY_DISCORD_ID = 860215082541514752  
 ALLOWED_ROLE_IDS = [1541583386441809950, 1544552950977011723]  
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
+JAIL_ROLE_ID = 1541262891468988416
 
 intents = discord.Intents.default()
 intents.message_content = True  
@@ -42,6 +43,32 @@ def check_permissions(ctx):
 @bot.event
 async def on_ready():
     print(f'Successfully logged in as: {bot.user}')
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+
+    clean_content = message.content.strip().lower()
+
+    if clean_content in ["السلام عليكم", "سلام عليكم"]:
+        await message.reply("**__ عليكم السلام ورحمه الله وبركاته __**")
+        return
+
+    elif clean_content == "باك":
+        await message.reply("منور يا غالي، حياك الله في السيرفر! ✨👋")
+        return
+
+    elif clean_content == "بنورك":
+        await message.reply("بنور نورك يا بعد قلبي 🤍🌹")
+        return
+
+    elif bot.user.mentioned_in(message) and not message.mention_everyone:
+        if not clean_content.startswith("!"):
+            await message.reply("لبيه؟ آمرني، أنا في الخدمة! 🤖🤍")
+            return
+
+    await bot.process_commands(message)
 
 @bot.command()
 async def rename(ctx, *, new_name: str):
@@ -131,6 +158,28 @@ async def give_role(ctx, member: discord.Member, *, role_input: str):
             await ctx.send(f"➕ تم إعطاء رتبة **{target_role.name}** إلى {member.mention}")
     except Exception as e:
         await ctx.send(f"❌ فشل تعديل الرتبة. تأكد أن رتبة البوت أعلى من الرتبة المطلوبة. الخطأ: {e}")
+
+@bot.command(name="سجن")
+async def jail_user(ctx, member: discord.Member):
+    if not check_permissions(ctx):
+        await ctx.send("🔒 You do not have permission to use this command!")
+        return
+        
+    jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
+    if not jail_role:
+        await ctx.send("❌ لم أتمكن من العثور على رتبة السجن في هذا السيرفر، يرجى التأكد من الآيدي.")
+        return
+
+    try:
+        roles_to_remove = [role for role in member.roles if role != ctx.guild.default_role and not role.managed]
+        
+        if roles_to_remove:
+            await member.remove_roles(*roles_to_remove)
+            
+        await member.add_roles(jail_role)
+        await ctx.send(f"⛓️ تم تجريد {member.mention} من جميع رتبهم ونقلهم إلى السجن بنجاح!")
+    except Exception as e:
+        await ctx.send(f"❌ فشل إتمام عملية السجن. تأكد أن رتبة البوت أعلى من رتب الشخص المستهدف. الخطأ: {e}")
 
 async def main():
     async with bot:
