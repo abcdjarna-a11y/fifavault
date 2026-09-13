@@ -180,22 +180,30 @@ async def on_message(message):
                                 await message.reply("لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
                                 return
                             
-                            chat_completion = ai_client.chat.completions.create(
-                                messages=[
-                                    {
-                                        "role": "system",
-                                        "content": "أنت بوت ذكي ومساعد تفاعلي محبوك لسيرفر ديسكورد، تتحدث بلهجة ودية واحترافية وتختصر الإجابات وتستخدم الإيموجيات."
-                                    },
-                                    {
-                                        "role": "user",
-                                        "content": prompt,
-                                    }
-                                ],
-                                model="llama3-8b-8192",
-                            )
-                            
+                            def get_ai_response():
+                                return ai_client.chat.completions.create(
+                                    messages=[
+                                        {
+                                            "role": "system",
+                                            "content": "أنت بوت ذكي ومساعد تفاعلي محبوك لسيرفر ديسكورد، تتحدث بلهجة ودية واحترافية وتختصر الإجابات وتستخدم الإيموجيات."
+                                        },
+                                        {
+                                            "role": "user",
+                                            "content": prompt,
+                                        }
+                                    ],
+                                    model="llama3-8b-8192",
+                                )
+
+                            chat_completion = await asyncio.to_thread(get_ai_response)
                             bot_response = chat_completion.choices.message.content
-                            await message.reply(bot_response)
+                            
+                            if len(bot_response) > 2000:
+                                for i in range(0, len(bot_response), 2000):
+                                    await message.reply(bot_response[i:i+2000])
+                            else:
+                                await message.reply(bot_response)
+                                
                         except Exception as e:
                             print(f"CRITICAL CHATBOT ERROR LOG: {e}")
                             await message.reply("🤖 واجهت مشكلة في الخادم أثناء معالجة النص.")
