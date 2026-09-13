@@ -10,7 +10,7 @@ import re
 import random
 from threading import Thread
 from flask import Flask
-import google.generativeai as genai
+from google import genai
 
 app = Flask('')
 
@@ -29,7 +29,7 @@ def keep_alive():
 keep_alive()
 
 MY_DISCORD_ID = 860215082541514752  
-ALLOWED_ROLE_IDS = [1541583386441809950, 1544552950977011723]  
+ALLOWED_ROLE_IDS = []  
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 JAIL_ROLE_ID = 1541262891468988416
@@ -39,10 +39,9 @@ MEMBER_CHAT_CHANNEL_ID = 1547615336092668034
 ADMIN_CHAT_CHANNEL_ID = 1541609897953722468
 
 if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
-    ai_model = genai.GenerativeModel('gemini-2.5-flash')
+    ai_client = genai.Client(api_key=GEMINI_KEY)
 else:
-    ai_model = None
+    ai_client = None
 
 intents = discord.Intents.default()
 intents.message_content = True  
@@ -78,6 +77,7 @@ def parse_duration(duration_str: str):
     elif unit == 'd':
         return datetime.timedelta(days=amount)
     return None
+
 @bot.event
 async def on_ready():
     print(f'Successfully logged in as: {bot.user}')
@@ -94,7 +94,6 @@ async def on_message(message):
 
     clean_content = message.content.strip().lower()
 
-    # نظام رصد ومعالجة الاختصارات الذكية بدون علامة تعجب (!)
     if clean_content.startswith(("اسكت ", "اص ", "تكلم ", "اسم ", "رتب ")):
         ctx = await bot.get_context(message)
         parts = message.content.split()
@@ -141,7 +140,6 @@ async def on_message(message):
                     await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
             return
 
-    # الردود التلقائية العادية المحددة
     if clean_content in ["السلام عليكم", "سلام عليكم"]:
         await message.reply("**__ عليكم السلام ورحمه الله وبركاته __** 🤝🤍")
         return
@@ -167,20 +165,23 @@ async def on_message(message):
         await message.reply("تفضل رابط روم الدعم الفني والمساعدة: <#1541203674477371502> 🤝🆘")
         return
 
-    # معالجة منشن البوت (التفريق بين رومات الذكاء الاصطناعي والرومات العادية)
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         if not message.content.strip().startswith("!#") and not clean_content.startswith("!"):
             if message.channel.id in [MEMBER_CHAT_CHANNEL_ID, ADMIN_CHAT_CHANNEL_ID]:
-                if ai_model:
+                if ai_client:
                     async with message.channel.typing():
                         try:
                             prompt = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
                             if not prompt:
                                 await message.reply("لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
                                 return
-                            response = ai_model.generate_content(prompt)
+                            response = ai_client.models.generate_content(
+                                model='gemini-2.5-flash',
+                                contents=prompt
+                            )
                             await message.reply(response.text)
                         except Exception as e:
+                            print(f"AI Error: {e}")
                             await message.reply("🤖 واجهت مشكلة صغيرة في استيعاب النص حالياً، يرجى المحاولة مرة أخرى!")
                     return
                 else:
@@ -197,6 +198,7 @@ async def on_message(message):
                 return
 
     await bot.process_commands(message)
+
 @bot.command()
 async def rename(ctx, *, new_name: str):
     if not check_permissions(ctx):
