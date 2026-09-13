@@ -10,7 +10,7 @@ import re
 import random
 from threading import Thread
 from flask import Flask
-from google import genai
+import google.generativeai as genai
 
 app = Flask('')
 
@@ -39,9 +39,10 @@ MEMBER_CHAT_CHANNEL_ID = 1547615336092668034
 ADMIN_CHAT_CHANNEL_ID = 1541609897953722468
 
 if GEMINI_KEY:
-    ai_client = genai.Client(api_key=GEMINI_KEY)
+    genai.configure(api_key=GEMINI_KEY)
+    ai_model = genai.GenerativeModel('gemini-2.5-flash')
 else:
-    ai_client = None
+    ai_model = None
 
 intents = discord.Intents.default()
 intents.message_content = True  
@@ -168,17 +169,14 @@ async def on_message(message):
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         if not message.content.strip().startswith("!#") and not clean_content.startswith("!"):
             if message.channel.id in [MEMBER_CHAT_CHANNEL_ID, ADMIN_CHAT_CHANNEL_ID]:
-                if ai_client:
+                if ai_model:
                     async with message.channel.typing():
                         try:
                             prompt = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
                             if not prompt:
                                 await message.reply("لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
                                 return
-                            response = ai_client.models.generate_content(
-                                model='gemini-2.5-flash',
-                                contents=prompt
-                            )
+                            response = ai_model.generate_content(prompt)
                             await message.reply(response.text)
                         except Exception as e:
                             print(f"AI Error: {e}")
@@ -419,7 +417,7 @@ async def main():
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-
+        
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         bot.http.connector = connector
         
