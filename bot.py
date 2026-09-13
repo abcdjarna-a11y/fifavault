@@ -40,7 +40,7 @@ ADMIN_CHAT_CHANNEL_ID = 1541609897953722468
 
 if GEMINI_KEY:
     genai.configure(api_key=GEMINI_KEY)
-    ai_model = genai.GenerativeModel('gemini-pro')
+    ai_model = genai.GenerativeModel('gemini-2.5-flash')
 else:
     ai_model = None
 
