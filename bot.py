@@ -10,6 +10,7 @@ import re
 import random
 from threading import Thread
 from flask import Flask
+import google.generativeai as genai
 
 app = Flask('')
 
@@ -28,10 +29,20 @@ def keep_alive():
 keep_alive()
 
 MY_DISCORD_ID = 860215082541514752  
-ALLOWED_ROLE_IDS = [1541583386441809950, 1544552950977011723] 
+ALLOWED_ROLE_IDS = [1541583386441809950, 1544552950977011723]  
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 JAIL_ROLE_ID = 1541262891468988416
 RELEASE_ROLE_ID = 1541192334115602483
+
+MEMBER_CHAT_CHANNEL_ID = 1547615336092668034
+ADMIN_CHAT_CHANNEL_ID = 1541609897953722468
+
+if GEMINI_KEY:
+    genai.configure(api_key=GEMINI_KEY)
+    ai_model = genai.GenerativeModel('gemini-pro')
+else:
+    ai_model = None
 
 intents = discord.Intents.default()
 intents.message_content = True  
@@ -67,7 +78,6 @@ def parse_duration(duration_str: str):
     elif unit == 'd':
         return datetime.timedelta(days=amount)
     return None
-
 @bot.event
 async def on_ready():
     print(f'Successfully logged in as: {bot.user}')
@@ -84,48 +94,107 @@ async def on_message(message):
 
     clean_content = message.content.strip().lower()
 
+    # نظام رصد ومعالجة الاختصارات الذكية بدون علامة تعجب (!)
+    if clean_content.startswith(("اسكت ", "اص ", "تكلم ", "اسم ", "رتب ")):
+        ctx = await bot.get_context(message)
+        parts = message.content.split()
+        cmd_trigger = parts[0]
+        args = parts[1:]
+        
+        if cmd_trigger in ["اسكت", "اص"]:
+            ctx.command = bot.get_command("اسكت")
+            if len(args) >= 2:
+                try:
+                    member = await commands.MemberConverter().convert(ctx, args[0])
+                    duration = " ".join(args[1:])
+                    await bot.get_command("اسكت").callback(ctx, member, duration_str=duration)
+                except Exception as e:
+                    await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
+            return
+        elif cmd_trigger == "تكلم":
+            ctx.command = bot.get_command("تكلم")
+            if len(args) >= 1:
+                try:
+                    member = await commands.MemberConverter().convert(ctx, args[0])
+                    await bot.get_command("تكلم").callback(ctx, member)
+                except Exception as e:
+                    await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
+            return
+        elif cmd_trigger == "اسم":
+            ctx.command = bot.get_command("اسم")
+            if len(args) >= 2:
+                try:
+                    member = await commands.MemberConverter().convert(ctx, args[0])
+                    new_name = " ".join(args[1:])
+                    await bot.get_command("اسم").callback(ctx, member, new_name=new_name)
+                except Exception as e:
+                    await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
+            return
+        elif cmd_trigger == "رتب":
+            ctx.command = bot.get_command("رتب")
+            if len(args) >= 2:
+                try:
+                    member = await commands.MemberConverter().convert(ctx, args[0])
+                    role_input = " ".join(args[1:])
+                    await bot.get_command("رتب").callback(ctx, member, role_input=role_input)
+                except Exception as e:
+                    await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
+            return
+
+    # الردود التلقائية العادية المحددة
     if clean_content in ["السلام عليكم", "سلام عليكم"]:
         await message.reply("**__ عليكم السلام ورحمه الله وبركاته __** 🤝🤍")
         return
-
     elif clean_content == "باك":
         await message.reply("منور يا غالي، حياك الله في السيرفر! ✨👋")
         return
-
     elif clean_content == "بنورك":
         await message.reply("بنور نورك يا بعد قلبي 🤍🌹")
         return
-
     elif clean_content == "مين عمك":
         await message.reply("يوسف 👑🦁")
         return
-
     elif clean_content == "منور يابوت":
         await message.reply("النور نورك ياتاج راسي ✨👑❤️")
         return
-
     elif clean_content == "مساعدة":
         await message.reply("**__ اهلا ياصديقي! معاك بوت الخاص بسيرفر ، اذا حاب تعرف القوانين <#1541195966105911368> 📜 ، اذا حاب تعرف اخر الأخبار الخاصة بسيرفر <#1541192362204860436> 📢 ، اذا حاب تقديم شكوى او توثق نادي او تستفسر <#1541203674477371502> 🛠️ ، اذا في شي تاني ماحصلته ، فقط قول لي ايش هو و بعلمك __** 🌟")
         return
-
     elif clean_content == "تويتر":
         await message.reply("تفضل رابط الروم الخاص بتويتر: <#1541223961332031528> 🐦🔥")
         return
-
     elif clean_content == "الدعم":
         await message.reply("تفضل رابط روم الدعم الفني والمساعدة: <#1541203674477371502> 🤝🆘")
         return
 
-    elif bot.user.mentioned_in(message) and not message.mention_everyone:
+    # معالجة منشن البوت (التفريق بين رومات الذكاء الاصطناعي والرومات العادية)
+    if bot.user.mentioned_in(message) and not message.mention_everyone:
         if not message.content.strip().startswith("!#") and not clean_content.startswith("!"):
-            responses = [
-                "لبيه؟ آمرني، أنا في الخدمة! 🤖🤍",
-                "يا هلا والله! عيوني لك، كيف أقدر أساعدك؟ 👀✨",
-                "منشنتني؟ أنا هنا وجاهز لأي أمر! 🚀🛡️",
-                "لبيك وسعديك! البوت الخاص بالسيرفر تحت خدمتك دائماً 🌟👑"
-            ]
-            await message.reply(random.choice(responses))
-            return
+            if message.channel.id in [MEMBER_CHAT_CHANNEL_ID, ADMIN_CHAT_CHANNEL_ID]:
+                if ai_model:
+                    async with message.channel.typing():
+                        try:
+                            prompt = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
+                            if not prompt:
+                                await message.reply("لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
+                                return
+                            response = ai_model.generate_content(prompt)
+                            await message.reply(response.text)
+                        except Exception as e:
+                            await message.reply("🤖 واجهت مشكلة صغيرة في استيعاب النص حالياً، يرجى المحاولة مرة أخرى!")
+                    return
+                else:
+                    await message.reply("⚙️ نظام الشات بوت قيد التجهيز من قبل الإدارة، يرجى تزويدي بمفتاح API أولاً.")
+                    return
+            else:
+                responses = [
+                    "لبيه؟ آمرني، أنا في الخدمة! 🤖🤍",
+                    "يا هلا والله! عيوني لك، كيف أقدر أساعدك؟ 👀✨",
+                    "منشنتني؟ أنا هنا وجاهز لأي أمر! 🚀🛡️",
+                    "لبيك وسعديك! البوت الخاص بالسيرفر تحت خدمتك دائماً 🌟👑"
+                ]
+                await message.reply(random.choice(responses))
+                return
 
     await bot.process_commands(message)
 @bot.command()
@@ -174,7 +243,7 @@ async def lock_channel(ctx, channel: discord.TextChannel = None):
     channel = channel or ctx.channel
     try:
         await channel.set_permissions(ctx.guild.default_role, send_messages=False)
-        await ctx.send(f"🔒 تم قفل الشات بنجاح: {channel.mention}")
+        await ctx.send(f"🔒 تم قفل الشات بنجاح دون التأثير على الخصوصية: {channel.mention}")
     except Exception as e:
         await ctx.send(f"❌ فشل قفل الشات. الخطأ: {e}")
 
@@ -206,7 +275,6 @@ async def give_role(ctx, member: discord.Member, *, role_input: str):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
-    
     target_role = None
     if role_input.startswith("<&") and role_input.endswith(">"):
         role_id = int(role_input.strip("<@&>"))
@@ -216,11 +284,9 @@ async def give_role(ctx, member: discord.Member, *, role_input: str):
             if role_input.lower() in role.name.lower():
                 target_role = role
                 break
-                
     if not target_role:
         await ctx.send("❌ لم أتمكن من العثور على هذه الرتبة.")
         return
-
     try:
         if target_role in member.roles:
             await member.remove_roles(target_role)
@@ -230,22 +296,20 @@ async def give_role(ctx, member: discord.Member, *, role_input: str):
             await ctx.send(f"➕ تم إعطاء رتبة **{target_role.name}** إلى {member.mention}")
     except Exception as e:
         await ctx.send(f"❌ فشل تعديل الرتبة. الخطأ: {e}")
+
 @bot.command(name="سجن")
 async def jail_user(ctx, member: discord.Member):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
-        
     jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
     if not jail_role:
         await ctx.send("❌ لم أتمكن من العثور على رتبة السجن في هذا السيرفر.")
         return
-
     try:
         roles_to_remove = [role for role in member.roles if role != ctx.guild.default_role and not role.managed]
         if roles_to_remove:
             await member.remove_roles(*roles_to_remove)
-            
         await member.add_roles(jail_role)
         await ctx.send(f"⛓️ تم تجريد {member.mention} من جميع رتبهم ونقلهم إلى السجن بنجاح!")
     except Exception as e:
@@ -256,10 +320,8 @@ async def release_user(ctx, member: discord.Member):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
-        
     jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
     release_role = ctx.guild.get_role(RELEASE_ROLE_ID)
-    
     try:
         if jail_role and jail_role in member.roles:
             await member.remove_roles(jail_role)
@@ -330,13 +392,13 @@ async def slash_help(interaction: discord.Interaction):
         color=discord.Color.green()
     )
     embed.add_field(name="🛡️ أوامر الإشراف والمراقبة (Prefix: !)", value=(
-        "`!اسكت @user [الوقت]` -> تايم أوت بصيغة ذكية (مثال: !اسكت @user 7d أو 2h)\n"
-        "`!تكلم @user` -> إلغاء التايم أوت عن العضو تلقائياً وفوراً 🔊\n"
-        "`!قفل` / `!فتح` -> التحكم الكامل في فتح وإغلاق غرف الدردشة 🔒🔓\n"
+        "`!اسكت @user [الوقت]` / `اسكت` / `اص` -> تايم أوت ذكي\n"
+        "`!تكلم @user` / `تكلم` -> إلغاء التايم أوت عن العضو تلقائياً وفوراً 🔊\n"
+        "`!قفل` / `!فتح` -> التحكم الفعال والمحمي في فتح وإغلاق الرومات 🔒🔓\n"
         "`!حذف [العدد]` -> تنظيف وحذف الرسائل من الشات بسرعة 🧹\n"
         "`!برا @user` -> طرد (Kick) العضو مباشرة خارج السيرفر 🥾\n"
-        "`!اسم @user [الاسم الجديد]` -> تعديل اللقب والشهرة داخل السيرفر 📝\n"
-        "`!رتب @user [اسم الرتبة]` -> منح أو إزالة الرتب بالبحث التلقائي الذكي ➕➖"
+        "`!اسم @user [الاسم الجديد]` / `اسم` -> تعديل اللقب 📝\n"
+        "`!رتب @user [اسم الرتبة]` / `رتب` -> منح أو إزالة الرتب بالبحث الذكي ➕➖"
     ), inline=False)
     embed.add_field(name="⛓️ نظام السجن والإفراج", value=(
         "`!سجن @user` -> سحب جميع الرتب ونقله لرتبة السجن المحددة ⛓️\n"
@@ -348,7 +410,6 @@ async def slash_help(interaction: discord.Interaction):
         "`/embed [النص]` -> كتابة نصوص وتأطيرها داخل إمبد ملون فاخر (للمالك) 🖼️\n"
         "`/help` -> يعرض لك هذه القائمة المنظمة والإرشادية الرائعة 📜"
     ), inline=False)
-    embed.add_field(name="💬 أنظمة الرد التلقائي السريع", value="البوت يتفاعل تلقائياً بالريبلاي عند كتابة: (السلام عليكم، باك، بنورك، منور يابوت، مساعدة، تويتر، الدعم، مين عمك). وبنظام عشوائي ترفيهي عند منشنة البوت بدون كتابة أوامر! 🔮", inline=False)
     await interaction.response.send_message(embed=embed)
 
 async def main():
@@ -356,7 +417,7 @@ async def main():
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
         ssl_context.verify_mode = ssl.CERT_NONE
-        
+
         connector = aiohttp.TCPConnector(ssl=ssl_context)
         bot.http.connector = connector
         
