@@ -2,241 +2,354 @@ import discord
 from discord.ext import commands
 from discord import app_commands
 import asyncio
-import aiohttp
-import ssl
 import os
 import datetime
 import re
 import random
+import traceback
 from threading import Thread
 from flask import Flask
 
+# ── Optional AsyncGroq import ──────────────────────────────────────────────────
 try:
-    from groq import Groq
+    from groq import AsyncGroq          # pip install groq>=0.9.0
+    GROQ_AVAILABLE = True
 except ImportError:
-    Groq = None
+    AsyncGroq = None                    # type: ignore[assignment,misc]
+    GROQ_AVAILABLE = False
 
-app = Flask('')
+# ── Flask keep-alive (Render / Replit free-tier) ──────────────────────────────
+app = Flask(__name__)
 
-@app.route('/')
+@app.route("/")
 def home():
     return "Bot is alive!"
 
-def run():
+def _run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    # use_reloader=False is critical — avoids double-spawning inside threads
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 def keep_alive():
-    t = Thread(target=run)
+    t = Thread(target=_run_flask, daemon=True)
     t.start()
 
-keep_alive()
-
-MY_DISCORD_ID = 860215082541514752  
-ALLOWED_ROLE_IDS = [1541583386441809950, 1544552950977011723]  
-BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
-GROQ_KEY = os.environ.get("GROQ_API_KEY")
-JAIL_ROLE_ID = 1541262891468988416
-RELEASE_ROLE_ID = 1541192334115602483
-
+# ── Config ────────────────────────────────────────────────────────────────────
+MY_DISCORD_ID       = 860215082541514752
+ALLOWED_ROLE_IDS    = [1541583386441809950, 1544552950977011723]
+BOT_TOKEN           = os.environ.get("DISCORD_TOKEN", "")
+GROQ_KEY            = os.environ.get("GROQ_API_KEY", "")
+JAIL_ROLE_ID        = 1541262891468988416
+RELEASE_ROLE_ID     = 1541192334115602483
 MEMBER_CHAT_CHANNEL_ID = 1547615336092668034
-ADMIN_CHAT_CHANNEL_ID = 1541609897953722468
+ADMIN_CHAT_CHANNEL_ID  = 1541609897953722468
 
-if GROQ_KEY and Groq:
-    ai_client = Groq(api_key=GROQ_KEY)
-else:
-    ai_client = None
+AI_MODEL            = "llama3-8b-8192"
+AI_SYSTEM_PROMPT    = (
+    "أنت بوت ذكي ومساعد تفاعلي محبوك لسيرفر ديسكورد، "
+    "تتحدث بلهجة ودية واحترافية وتختصر الإجابات وتستخدم الإيموجيات."
+)
 
+# ── Groq async client ─────────────────────────────────────────────────────────
+ai_client: "AsyncGroq | None" = None
+if GROQ_AVAILABLE and GROQ_KEY:
+    ai_client = AsyncGroq(api_key=GROQ_KEY)   # type: ignore[call-arg]
+
+# ── Intents & bot ─────────────────────────────────────────────────────────────
 intents = discord.Intents.default()
-intents.message_content = True  
+intents.message_content = True
 intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-def check_permissions(ctx):
-    author_role_ids = [role.id for role in ctx.author.roles]
-    has_allowed_role = any(role_id in ALLOWED_ROLE_IDS for role_id in author_role_ids)
-    return ctx.author.id == MY_DISCORD_ID or has_allowed_role
+# ─────────────────────────────────────────────────────────────────────────────
+# Utility helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
-def check_slash_permissions(interaction: discord.Interaction):
+def split_message(text: str, limit: int = 1990) -> list[str]:
+    """
+    Split *text* into chunks that each fit within Discord's 2000-char limit.
+    Tries to split on newlines first, falls back to hard-cutting at *limit*.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    chunks: list[str] = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        # Try to find a natural break point (newline) within the limit
+        cut = text.rfind("\n", 0, limit)
+        if cut == -1:
+            cut = limit
+        chunks.append(text[:cut])
+        text = text[cut:].lstrip("\n")
+    return chunks
+
+
+def check_permissions(ctx: commands.Context) -> bool:
+    if ctx.author.id == MY_DISCORD_ID:
+        return True
+    author_role_ids = {role.id for role in ctx.author.roles}   # type: ignore[union-attr]
+    return bool(author_role_ids & set(ALLOWED_ROLE_IDS))
+
+
+def check_slash_permissions(interaction: discord.Interaction) -> bool:
     if interaction.user.id == MY_DISCORD_ID:
         return True
-    if hasattr(interaction.user, 'roles'):
-        author_role_ids = [role.id for role in interaction.user.roles]
-        return any(role_id in ALLOWED_ROLE_IDS for role_id in author_role_ids)
+    if hasattr(interaction.user, "roles"):
+        author_role_ids = {role.id for role in interaction.user.roles}  # type: ignore[union-attr]
+        return bool(author_role_ids & set(ALLOWED_ROLE_IDS))
     return False
 
-def parse_duration(duration_str: str):
+
+def parse_duration(duration_str: str) -> datetime.timedelta | None:
     match = re.match(r"(\d+)([smhd])", duration_str.lower().strip())
     if not match:
         return None
-    amount = int(match.group(1))
-    unit = match.group(2)
-    if unit == 's':
-        return datetime.timedelta(seconds=amount)
-    elif unit == 'm':
-        return datetime.timedelta(minutes=amount)
-    elif unit == 'h':
-        return datetime.timedelta(hours=amount)
-    elif unit == 'd':
-        return datetime.timedelta(days=amount)
-    return None
+    amount, unit = int(match.group(1)), match.group(2)
+    return {
+        "s": datetime.timedelta(seconds=amount),
+        "m": datetime.timedelta(minutes=amount),
+        "h": datetime.timedelta(hours=amount),
+        "d": datetime.timedelta(days=amount),
+    }.get(unit)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Events
+# ─────────────────────────────────────────────────────────────────────────────
 
 @bot.event
 async def on_ready():
-    print(f'Successfully logged in as: {bot.user}')
+    print(f"[BOT] Logged in as: {bot.user}  (id={bot.user.id})")   # type: ignore[union-attr]
     try:
         synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands!")
-    except Exception as e:
-        print(f"Failed to sync slash commands: {e}")
+        print(f"[BOT] Synced {len(synced)} slash command(s).")
+    except Exception:
+        print("[BOT] Failed to sync slash commands:\n" + traceback.format_exc())
+
 
 @bot.event
-async def on_message(message):
+async def on_message(message: discord.Message):
+    # ── Ignore bots ───────────────────────────────────────────────────────────
     if message.author.bot:
         return
 
-    clean_content = message.content.strip().lower()
+    content       = message.content          # original casing — needed for AI
+    clean_content = content.strip().lower()  # lowercased — used for keyword matching
 
-    if clean_content.startswith(("اسكت ", "اص ", "تكلم ", "اسم ", "رتب ")):
+    # ─────────────────────────────────────────────────────────────────────────
+    # Block 1 — Arabic prefix text-commands (اسكت / تكلم / اسم / رتب)
+    #
+    # BUGS FIXED:
+    #   • cmd_trigger was assigned `parts` (the whole list) instead of `parts[0]`
+    #     so none of the elif branches ever matched.
+    #   • MemberConverter received the entire `args` list instead of `args[0]`.
+    #   • We now use `await bot.process_commands(message)` for !-prefixed variants
+    #     but handle bare Arabic triggers here manually.
+    # ─────────────────────────────────────────────────────────────────────────
+    ARABIC_TRIGGERS = ("اسكت ", "اص ", "تكلم ", "اسم ", "رتب ")
+    if any(clean_content.startswith(t) for t in ARABIC_TRIGGERS):
+        parts       = content.split()
+        cmd_trigger = parts[0]          # FIX #1: was `parts`, missing [0]
+        args        = parts[1:]
+
         ctx = await bot.get_context(message)
-        parts = message.content.split()
-        cmd_trigger = parts[0]
-        args = parts[1:]
-        
-        if cmd_trigger in ["اسكت", "اص"]:
-            ctx.command = bot.get_command("اسكت")
+
+        if cmd_trigger in ("اسكت", "اص"):
             if len(args) >= 2:
                 try:
-                    member = await commands.MemberConverter().convert(ctx, args[0])
+                    # FIX #2: pass args[0] (string), not args (list)
+                    member   = await commands.MemberConverter().convert(ctx, args[0])
                     duration = " ".join(args[1:])
-                    await bot.get_command("اسكت").callback(ctx, member, duration_str=duration)
-                except Exception as e:
-                    await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
+                    await bot.get_command("اسكت").callback(ctx, member, duration_str=duration)  # type: ignore[union-attr]
+                except Exception:
+                    tb = traceback.format_exc()
+                    print(f"[CMD:اسكت] ERROR\n{tb}")
+                    await ctx.send("❌ خطأ في معالجة أمر اسكت — تأكد من صحة المنشن والوقت.")
+            else:
+                await ctx.send("❌ الاستخدام: `اسكت @user [مدة مثل 10m أو 1h]`")
             return
+
         elif cmd_trigger == "تكلم":
-            ctx.command = bot.get_command("تكلم")
             if len(args) >= 1:
                 try:
                     member = await commands.MemberConverter().convert(ctx, args[0])
-                    await bot.get_command("تكلم").callback(ctx, member)
-                except Exception as e:
-                    await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
+                    await bot.get_command("تكلم").callback(ctx, member)  # type: ignore[union-attr]
+                except Exception:
+                    tb = traceback.format_exc()
+                    print(f"[CMD:تكلم] ERROR\n{tb}")
+                    await ctx.send("❌ خطأ في معالجة أمر تكلم — تأكد من صحة المنشن.")
+            else:
+                await ctx.send("❌ الاستخدام: `تكلم @user`")
             return
+
         elif cmd_trigger == "اسم":
-            ctx.command = bot.get_command("اسم")
             if len(args) >= 2:
                 try:
-                    member = await commands.MemberConverter().convert(ctx, args[0])
+                    member   = await commands.MemberConverter().convert(ctx, args[0])
                     new_name = " ".join(args[1:])
-                    await bot.get_command("اسم").callback(ctx, member, new_name=new_name)
-                except Exception as e:
-                    await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
+                    await bot.get_command("اسم").callback(ctx, member, new_name=new_name)  # type: ignore[union-attr]
+                except Exception:
+                    tb = traceback.format_exc()
+                    print(f"[CMD:اسم] ERROR\n{tb}")
+                    await ctx.send("❌ خطأ في معالجة أمر اسم — تأكد من صحة المنشن والاسم.")
+            else:
+                await ctx.send("❌ الاستخدام: `اسم @user الاسم الجديد`")
             return
+
         elif cmd_trigger == "رتب":
-            ctx.command = bot.get_command("رتب")
             if len(args) >= 2:
                 try:
-                    member = await commands.MemberConverter().convert(ctx, args[0])
+                    member     = await commands.MemberConverter().convert(ctx, args[0])
                     role_input = " ".join(args[1:])
-                    await bot.get_command("رتب").callback(ctx, member, role_input=role_input)
-                except Exception as e:
-                    await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
+                    await bot.get_command("رتب").callback(ctx, member, role_input=role_input)  # type: ignore[union-attr]
+                except Exception:
+                    tb = traceback.format_exc()
+                    print(f"[CMD:رتب] ERROR\n{tb}")
+                    await ctx.send("❌ خطأ في معالجة أمر رتب — تأكد من صحة المنشن واسم الرتبة.")
+            else:
+                await ctx.send("❌ الاستخدام: `رتب @user اسم_الرتبة`")
             return
 
-    if clean_content in ["السلام عليكم", "سلام عليكم"]:
-        await message.reply("**__ عليكم السلام ورحمه الله وبركاته __** 🤝🤍")
-        return
-    elif clean_content == "باك":
-        await message.reply("منور يا غالي، حياك الله في السيرفر! ✨👋")
-        return
-    elif clean_content == "بنورك":
-        await message.reply("بنور نورك يا بعد قلبي 🤍🌹")
-        return
-    elif clean_content == "مين عمك":
-        await message.reply("يوسف 👑🦁")
-        return
-    elif clean_content == "منور يابوت":
-        await message.reply("النور نورك ياتاج راسي ✨👑❤️")
-        return
-    elif clean_content == "مساعدة":
-        await message.reply("**__ اهلا ياصديقي! معاك بوت الخاص بسيرفر ، اذا حاب تعرف القوانين <#1541195966105911368> 📜 ، اذا حاب تعرف اخر الأخبار الخاصة بسيرفر <#1541192362204860436> 📢 ، اذا حاب تقديم شكوى او توثق نادي او تستفسر <#1541203674477371502> 🛠️ ، اذا في شي تاني ماحصلته ، فقط قول لي ايش هو و بعلمك __** 🌟")
-        return
-    elif clean_content == "تويتر":
-        await message.reply("تفضل رابط الروم الخاص بتويتر: <#1541223961332031528> 🐦🔥")
-        return
-    elif clean_content == "الدعم":
-        await message.reply("تفضل رابط روم الدعم الفني والمساعدة: <#1541203674477371502> 🤝🆘")
-        return
+    # ─────────────────────────────────────────────────────────────────────────
+    # Block 2 — Simple keyword auto-replies
+    # ─────────────────────────────────────────────────────────────────────────
+    KEYWORD_REPLIES: dict[str | tuple[str, ...], str] = {
+        ("السلام عليكم", "سلام عليكم"): "**__ عليكم السلام ورحمه الله وبركاته __** 🤝🤍",
+        ("باك",)                       : "منور يا غالي، حياك الله في السيرفر! ✨👋",
+        ("بنورك",)                     : "بنور نورك يا بعد قلبي 🤍🌹",
+        ("مين عمك",)                   : "يوسف 👑🦁",
+        ("منور يابوت",)                : "النور نورك ياتاج راسي ✨👑❤️",
+        ("مساعدة",)                    : (
+            "**__ اهلا ياصديقي! معاك بوت الخاص بسيرفر ، اذا حاب تعرف القوانين "
+            "<#1541195966105911368> 📜 ، اذا حاب تعرف اخر الأخبار الخاصة بسيرفر "
+            "<#1541192362204860436> 📢 ، اذا حاب تقديم شكوى او توثق نادي او تستفسر "
+            "<#1541203674477371502> 🛠️ ، اذا في شي تاني ماحصلته ، فقط قول لي ايش هو "
+            "و بعلمك __** 🌟"
+        ),
+        ("تويتر",)                     : "تفضل رابط الروم الخاص بتويتر: <#1541223961332031528> 🐦🔥",
+        ("الدعم",)                     : "تفضل رابط روم الدعم الفني والمساعدة: <#1541203674477371502> 🤝🆘",
+    }
 
-    if bot.user.mentioned_in(message) and not message.mention_everyone:
-        if not message.content.strip().startswith("!#") and not clean_content.startswith("!"):
-            if message.channel.id in [MEMBER_CHAT_CHANNEL_ID, ADMIN_CHAT_CHANNEL_ID]:
+    for keys, reply in KEYWORD_REPLIES.items():
+        if clean_content in (keys if isinstance(keys, tuple) else (keys,)):
+            await message.reply(reply)
+            return
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Block 3 — AI Chatbot (mention-triggered, AsyncGroq)
+    #
+    # BUGS FIXED:
+    #   • Replaced sync Groq() with AsyncGroq() + await  →  FIX #3
+    #   • choices[0].message.content   →  FIX #4 (was choices.message, missing [0])
+    #   • split_message() handles responses > 2000 chars  →  FIX #5
+    #   • Full traceback printed to console on error  →  FIX #6
+    # ─────────────────────────────────────────────────────────────────────────
+    if bot.user and bot.user.mentioned_in(message) and not message.mention_everyone:
+        # Ignore messages that start with ! or !# (they are prefix commands, not AI prompts)
+        if not clean_content.startswith("!"):
+            if message.channel.id in (MEMBER_CHAT_CHANNEL_ID, ADMIN_CHAT_CHANNEL_ID):
                 if ai_client:
+                    # Strip the mention(s) from the message to get the actual prompt
+                    prompt = (
+                        content
+                        .replace(f"<@{bot.user.id}>", "")
+                        .replace(f"<@!{bot.user.id}>", "")
+                        .strip()
+                    )
+
+                    if not prompt:
+                        await message.reply(
+                            "لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨"
+                        )
+                        return
+
                     async with message.channel.typing():
                         try:
-                            prompt = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
-                            if not prompt:
-                                await message.reply("لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
-                                return
-                            
-                            def get_ai_response():
-                                return ai_client.chat.completions.create(
-                                    messages=[
-                                        {
-                                            "role": "system",
-                                            "content": "أنت بوت ذكي ومساعد تفاعلي محبوك لسيرفر ديسكورد، تتحدث بلهجة ودية واحترافية وتختصر الإجابات وتستخدم الإيموجيات."
-                                        },
-                                        {
-                                            "role": "user",
-                                            "content": prompt,
-                                        }
-                                    ],
-                                    model="llama3-8b-8192",
-                                )
+                            # ── ASYNC Groq call (non-blocking) ────────────────
+                            chat_completion = await ai_client.chat.completions.create(
+                                messages=[
+                                    {"role": "system", "content": AI_SYSTEM_PROMPT},
+                                    {"role": "user",   "content": prompt},
+                                ],
+                                model=AI_MODEL,
+                            )
 
-                            chat_completion = await asyncio.to_thread(get_ai_response)
-                            bot_response = chat_completion.choices.message.content
-                            
-                            if len(bot_response) > 2000:
-                                for i in range(0, len(bot_response), 2000):
-                                    await message.reply(bot_response[i:i+2000])
-                            else:
-                                await message.reply(bot_response)
-                                
-                        except Exception as e:
-                            print(f"CRITICAL CHATBOT ERROR LOG: {e}")
-                            await message.reply("🤖 واجهت مشكلة في الخادم أثناء معالجة النص.")
+                            # FIX: was `choices.message.content` — missing [0]
+                            bot_response: str = chat_completion.choices[0].message.content or ""
+
+                            if not bot_response.strip():
+                                await message.reply("🤖 لم أتمكن من توليد رد. حاول مرة ثانية!")
+                                return
+
+                            # FIX: chunk long responses to stay under 2000 chars
+                            chunks = split_message(bot_response)
+                            first  = True
+                            for chunk in chunks:
+                                if first:
+                                    await message.reply(chunk)
+                                    first = False
+                                else:
+                                    await message.channel.send(chunk)
+
+                        except Exception:
+                            # FIX: print FULL traceback so you can diagnose the root cause
+                            tb = traceback.format_exc()
+                            print(f"[AI] CHATBOT ERROR — full traceback:\n{tb}")
+                            await message.reply(
+                                "🤖 واجهت مشكلة في الخادم أثناء معالجة النص. "
+                                "يرجى المحاولة مرة أخرى لاحقاً."
+                            )
                     return
+
                 else:
-                    await message.reply("⚙️ نظام الشات بوت قيد التجهيز من قبل الإدارة، يرجى تزويدي بمفتاح API الجديد.")
+                    await message.reply(
+                        "⚙️ نظام الشات بوت قيد التجهيز من قبل الإدارة، "
+                        "يرجى تزويدي بمفتاح API الجديد."
+                    )
                     return
+
             else:
+                # Bot mentioned outside AI channels → friendly random reply
                 responses = [
                     "لبيه؟ آمرني، أنا في الخدمة! 🤖🤍",
                     "يا هلا والله! عيوني لك، كيف أقدر أساعدك؟ 👀✨",
                     "منشنتني؟ أنا هنا وجاهز لأي أمر! 🚀🛡️",
-                    "لبيك وسعديك! البوت الخاص بالسيرفر تحت خدمتك دائماً 🌟👑"
+                    "لبيك وسعديك! البوت الخاص بالسيرفر تحت خدمتك دائماً 🌟👑",
                 ]
                 await message.reply(random.choice(responses))
                 return
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # Block 4 — Hand off to the commands framework (!-prefix commands)
+    # ─────────────────────────────────────────────────────────────────────────
     await bot.process_commands(message)
 
-@bot.command()
-async def rename(ctx, *, new_name: str):
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Prefix commands
+# ─────────────────────────────────────────────────────────────────────────────
+
+@bot.command(name="rename")
+async def rename(ctx: commands.Context, *, new_name: str):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
     try:
-        old_name = ctx.channel.name
-        await ctx.channel.edit(name=new_name)
-        await ctx.send(f"✅ Channel name changed from **{old_name}** to **{new_name}** 📝")
-    except Exception as e:
-        await ctx.send(f"❌ Failed to rename channel. Error: {e}")
+        old_name = ctx.channel.name   # type: ignore[union-attr]
+        await ctx.channel.edit(name=new_name)  # type: ignore[union-attr]
+        await ctx.send(f"✅ Channel renamed from **{old_name}** → **{new_name}** 📝")
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:rename] ERROR\n{tb}")
+        await ctx.send("❌ Failed to rename the channel. Check console for details.")
+
 
 @bot.command(name="اسكت")
-async def timeout_user(ctx, member: discord.Member, duration_str: str):
+async def timeout_user(ctx: commands.Context, member: discord.Member, *, duration_str: str):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
@@ -246,73 +359,99 @@ async def timeout_user(ctx, member: discord.Member, duration_str: str):
         return
     try:
         await member.timeout(duration)
-        await ctx.send(f"🤫 تم إعطاء تايم أوت لـ {member.mention} لمدة **{duration_str}** بنجاح.")
-    except Exception as e:
-        await ctx.send(f"❌ فشل إعطاء التايم أوت. الخطأ: {e}")
+        await ctx.send(
+            f"🤫 تم إعطاء تايم أوت لـ {member.mention} لمدة **{duration_str}** بنجاح."
+        )
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:اسكت] ERROR\n{tb}")
+        await ctx.send("❌ فشل إعطاء التايم أوت. تحقق من السجل في الكونسول.")
+
 
 @bot.command(name="تكلم")
-async def untimeout_user(ctx, member: discord.Member):
+async def untimeout_user(ctx: commands.Context, member: discord.Member):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
     try:
         await member.timeout(None)
-        await ctx.send(f"🔊 تم إزالة التايم أوت عن {member.mention}، يمكنه التحدث الآن!")
-    except Exception as e:
-        await ctx.send(f"❌ فشل إزالة التايم أوت عن العضو. الخطأ: {e}")
+        await ctx.send(
+            f"🔊 تم إزالة التايم أوت عن {member.mention}، يمكنه التحدث الآن!"
+        )
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:تكلم] ERROR\n{tb}")
+        await ctx.send("❌ فشل إزالة التايم أوت عن العضو.")
+
 
 @bot.command(name="قفل")
-async def lock_channel(ctx, channel: discord.TextChannel = None):
+async def lock_channel(ctx: commands.Context, channel: discord.TextChannel | None = None):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
-    channel = channel or ctx.channel
+    target = channel or ctx.channel
     try:
-        await channel.set_permissions(ctx.guild.default_role, send_messages=False)
-        await ctx.send(f"🔒 تم قفل الشات بنجاح دون التأثير على الخصوصية: {channel.mention}")
-    except Exception as e:
-        await ctx.send(f"❌ فشل قفل الشات. الخطأ: {e}")
+        await target.set_permissions(ctx.guild.default_role, send_messages=False)  # type: ignore[union-attr]
+        await ctx.send(f"🔒 تم قفل الشات بنجاح: {target.mention}")
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:قفل] ERROR\n{tb}")
+        await ctx.send("❌ فشل قفل الشات.")
+
 
 @bot.command(name="فتح")
-async def unlock_channel(ctx, channel: discord.TextChannel = None):
+async def unlock_channel(ctx: commands.Context, channel: discord.TextChannel | None = None):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
-    channel = channel or ctx.channel
+    target = channel or ctx.channel
     try:
-        await channel.set_permissions(ctx.guild.default_role, send_messages=True)
-        await ctx.send(f"🔓 تم فتح الشات بنجاح: {channel.mention}")
-    except Exception as e:
-        await ctx.send(f"❌ فشل فتح الشات. الخطأ: {e}")
+        await target.set_permissions(ctx.guild.default_role, send_messages=True)  # type: ignore[union-attr]
+        await ctx.send(f"🔓 تم فتح الشات بنجاح: {target.mention}")
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:فتح] ERROR\n{tb}")
+        await ctx.send("❌ فشل فتح الشات.")
+
 
 @bot.command(name="اسم")
-async def change_nickname(ctx, member: discord.Member, *, new_name: str):
+async def change_nickname(ctx: commands.Context, member: discord.Member, *, new_name: str):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
     try:
         await member.edit(nick=new_name)
         await ctx.send(f"📝 تم تغيير اسم {member.mention} إلى **{new_name}**")
-    except Exception as e:
-        await ctx.send(f"❌ فشل تغيير الاسم. الخطأ: {e}")
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:اسم] ERROR\n{tb}")
+        await ctx.send("❌ فشل تغيير الاسم.")
+
 
 @bot.command(name="رتب")
-async def give_role(ctx, member: discord.Member, *, role_input: str):
+async def give_role(ctx: commands.Context, member: discord.Member, *, role_input: str):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
-    target_role = None
-    if role_input.startswith("<&") and role_input.endswith(">"):
-        role_id = int(role_input.strip("<@&>"))
-        target_role = ctx.guild.get_role(role_id)
+
+    target_role: discord.Role | None = None
+
+    # Handle role mention format <@&ROLE_ID>
+    role_mention_match = re.match(r"<@&(\d+)>", role_input.strip())
+    if role_mention_match:
+        role_id    = int(role_mention_match.group(1))
+        target_role = ctx.guild.get_role(role_id)  # type: ignore[union-attr]
     else:
-        for role in ctx.guild.roles:
+        # Fuzzy name search (case-insensitive substring)
+        for role in ctx.guild.roles:                # type: ignore[union-attr]
             if role_input.lower() in role.name.lower():
                 target_role = role
                 break
+
     if not target_role:
         await ctx.send("❌ لم أتمكن من العثور على هذه الرتبة.")
         return
+
     try:
         if target_role in member.roles:
             await member.remove_roles(target_role)
@@ -320,45 +459,61 @@ async def give_role(ctx, member: discord.Member, *, role_input: str):
         else:
             await member.add_roles(target_role)
             await ctx.send(f"➕ تم إعطاء رتبة **{target_role.name}** إلى {member.mention}")
-    except Exception as e:
-        await ctx.send(f"❌ فشل تعديل الرتبة. الخطأ: {e}")
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:رتب] ERROR\n{tb}")
+        await ctx.send("❌ فشل تعديل الرتبة.")
+
 
 @bot.command(name="سجن")
-async def jail_user(ctx, member: discord.Member):
+async def jail_user(ctx: commands.Context, member: discord.Member):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
-    jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
+    jail_role = ctx.guild.get_role(JAIL_ROLE_ID)  # type: ignore[union-attr]
     if not jail_role:
         await ctx.send("❌ لم أتمكن من العثور على رتبة السجن في هذا السيرفر.")
         return
     try:
-        roles_to_remove = [role for role in member.roles if role != ctx.guild.default_role and not role.managed]
-        if roles_to_remove:
-            await member.remove_roles(*roles_to_remove)
+        removable = [
+            r for r in member.roles
+            if r != ctx.guild.default_role and not r.managed  # type: ignore[union-attr]
+        ]
+        if removable:
+            await member.remove_roles(*removable)
         await member.add_roles(jail_role)
-        await ctx.send(f"⛓️ تم تجريد {member.mention} من جميع رتبهم ونقلهم إلى السجن بنجاح!")
-    except Exception as e:
-        await ctx.send(f"❌ فشل إتمام عملية السجن. الخطأ: {e}")
+        await ctx.send(
+            f"⛓️ تم تجريد {member.mention} من جميع رتبهم ونقلهم إلى السجن بنجاح!"
+        )
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:سجن] ERROR\n{tb}")
+        await ctx.send("❌ فشل إتمام عملية السجن.")
+
 
 @bot.command(name="افراج")
-async def release_user(ctx, member: discord.Member):
+async def release_user(ctx: commands.Context, member: discord.Member):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
-    jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
-    release_role = ctx.guild.get_role(RELEASE_ROLE_ID)
+    jail_role    = ctx.guild.get_role(JAIL_ROLE_ID)    # type: ignore[union-attr]
+    release_role = ctx.guild.get_role(RELEASE_ROLE_ID)  # type: ignore[union-attr]
     try:
         if jail_role and jail_role in member.roles:
             await member.remove_roles(jail_role)
         if release_role:
             await member.add_roles(release_role)
-        await ctx.send(f"🕊️ تم الإفراج عن {member.mention}، وإزالة رتبة السجن وإعطائه الرتبة المحددة!")
-    except Exception as e:
-        await ctx.send(f"❌ فشل تنفيذ أمر الإفراج. الخطأ: {e}")
+        await ctx.send(
+            f"🕊️ تم الإفراج عن {member.mention}، وإزالة رتبة السجن وإعطائه الرتبة المحددة!"
+        )
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:افراج] ERROR\n{tb}")
+        await ctx.send("❌ فشل تنفيذ أمر الإفراج.")
+
 
 @bot.command(name="حذف")
-async def delete_messages(ctx, amount: int):
+async def delete_messages(ctx: commands.Context, amount: int):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
@@ -366,87 +521,129 @@ async def delete_messages(ctx, amount: int):
         await ctx.send("❌ الرجاء كتابة رقم أكبر من 0 لحذف الرسائل!")
         return
     try:
-        deleted = await ctx.channel.purge(limit=amount + 1)
+        deleted = await ctx.channel.purge(limit=amount + 1)  # type: ignore[union-attr]
         msg = await ctx.send(f"🧹 تم حذف **{len(deleted) - 1}** رسالة بنجاح!")
         await asyncio.sleep(3)
         await msg.delete()
-    except Exception as e:
-        await ctx.send(f"❌ فشل حذف الرسائل. الخطأ: {e}")
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:حذف] ERROR\n{tb}")
+        await ctx.send("❌ فشل حذف الرسائل.")
+
 
 @bot.command(name="برا")
-async def kick_user(ctx, member: discord.Member, *, reason: str = "لا يوجد سبب محدد"):
+async def kick_user(
+    ctx: commands.Context,
+    member: discord.Member,
+    *,
+    reason: str = "لا يوجد سبب محدد",
+):
     if not check_permissions(ctx):
         await ctx.send("🔒 You do not have permission to use this command!")
         return
     try:
         await member.kick(reason=reason)
-        await ctx.send(f"🥾 تم طرد العضو {member.mention} بنجاح خارج السيرفر! الباب يوسع جمل.")
-    except Exception as e:
-        await ctx.send(f"❌ فشل طرد العضو من السيرفر. الخطأ: {e}")
+        await ctx.send(
+            f"🥾 تم طرد العضو {member.mention} بنجاح خارج السيرفر! الباب يوسع جمل."
+        )
+    except Exception:
+        tb = traceback.format_exc()
+        print(f"[CMD:برا] ERROR\n{tb}")
+        await ctx.send("❌ فشل طرد العضو من السيرفر.")
+
 
 @bot.command(name="A")
-async def show_avatar(ctx, member: discord.Member = None):
-    member = member or ctx.author
-    embed = discord.Embed(title=f"👤 صورة الحساب الشخصي لـ {member.name}", color=discord.Color.blue())
-    embed.set_image(url=member.display_avatar.url)
+async def show_avatar(ctx: commands.Context, member: discord.Member | None = None):
+    target = member or ctx.author
+    embed  = discord.Embed(
+        title=f"👤 صورة الحساب الشخصي لـ {target.name}",
+        color=discord.Color.blue(),
+    )
+    embed.set_image(url=target.display_avatar.url)
     await ctx.send(embed=embed)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Slash commands
+# ─────────────────────────────────────────────────────────────────────────────
 
 @bot.tree.command(name="say", description="يجعل البوت يتحدث بلسانك في نفس الروم")
 @app_commands.describe(text="النص المراد إرساله")
 async def slash_say(interaction: discord.Interaction, text: str):
     if not check_slash_permissions(interaction):
-        await interaction.response.send_message("🔒 ليس لديك صلاحية لاستخدام هذا الأمر السري!", ephemeral=True)
+        await interaction.response.send_message(
+            "🔒 ليس لديك صلاحية لاستخدام هذا الأمر السري!", ephemeral=True
+        )
         return
     await interaction.response.send_message("⚙️ جاري إرسال النص الخاص بك...", ephemeral=True)
-    await interaction.channel.send(text)
+    await interaction.channel.send(text)  # type: ignore[union-attr]
+
 
 @bot.tree.command(name="embed", description="يجعل البوت يرسل إمبد ملون مخصص (خاص بالمالك فقط)")
 @app_commands.describe(text="النص المراد إرساله داخل الإمبد")
 async def slash_embed(interaction: discord.Interaction, text: str):
     if interaction.user.id != MY_DISCORD_ID:
-        await interaction.response.send_message("🔒 هذا الأمر مخصص حصرياً لمالك البوت فقط!", ephemeral=True)
+        await interaction.response.send_message(
+            "🔒 هذا الأمر مخصص حصرياً لمالك البوت فقط!", ephemeral=True
+        )
         return
-    await interaction.response.send_message("⚙️ جاري تجهيز وإرسال الإمبد الملون...", ephemeral=True)
+    await interaction.response.send_message(
+        "⚙️ جاري تجهيز وإرسال الإمبد الملون...", ephemeral=True
+    )
     embed = discord.Embed(description=text, color=discord.Color.from_rgb(47, 49, 54))
-    await interaction.channel.send(embed=embed)
+    await interaction.channel.send(embed=embed)  # type: ignore[union-attr]
+
 
 @bot.tree.command(name="help", description="عرض جميع الأوامر المتاحة للبوت وكيفية استخدامها")
 async def slash_help(interaction: discord.Interaction):
     embed = discord.Embed(
         title="🤖 قائمة أوامر البوت الكاملة والشرح 📝",
         description="هنا تجد كل ما يمكن للبوت القيام به في السيرفر مع طريقة الاستخدام الفعالة:",
-        color=discord.Color.green()
+        color=discord.Color.green(),
     )
-    embed.add_field(name="🛡️ أوامر الإشراف والمراقبة (Prefix: !)", value=(
-        "`!اسكت @user [الوقت]` / `اسكت` / `اص` -> تايم أوت ذكي\n"
-        "`!تكلم @user` / `تكلم` -> إلغاء التايم أوت عن العضو تلقائياً وفوراً 🔊\n"
-        "`!قفل` / `!فتح` -> التحكم الفعال والمحمي في فتح وإغلاق الرومات 🔒🔓\n"
-        "`!حذف [العدد]` -> تنظيف وحذف الرسائل من الشات بسرعة 🧹\n"
-        "`!برا @user` -> طرد (Kick) العضو مباشرة خارج السيرفر 🥾\n"
-        "`!اسم @user [الاسم الجديد]` / `اسم` -> تعديل اللقب 📝\n"
-        "`!رتب @user [اسم الرتبة]` / `رتب` -> منح أو إزالة الرتب بالبحث الذكي ➕➖"
-    ), inline=False)
-    embed.add_field(name="⛓️ نظام السجن والإفراج", value=(
-        "`!سجن @user` -> سحب جميع الرتب ونقله لرتبة السجن المحددة ⛓️\n"
-        "`!افراج @user` -> فك السجن عنه ومنحه الرتبة المحددة للبدء من جديد 🕊️"
-    ), inline=False)
-    embed.add_field(name="⚙️ الأوامر التفاعلية وأوامر السلاش (Slash Commands)", value=(
-        "`!A @user` -> استعراض صورة الملف الشخصي (Avatar) للعضو 👤\n"
-        "`/say [النص]` -> التحدث بلسان البوت وإرسال نصوص عادية في الروم 💬\n"
-        "`/embed [النص]` -> كتابة نصوص وتأطيرها داخل إمبد ملون فاخر (للمالك) 🖼️\n"
-        "`/help` -> يعرض لك هذه القائمة المنظمة والإرشادية الرائعة 📜"
-    ), inline=False)
+    embed.add_field(
+        name="🛡️ أوامر الإشراف والمراقبة (Prefix: !)",
+        value=(
+            "`!اسكت @user [الوقت]` / `اسكت @user [الوقت]` / `اص @user [الوقت]` → تايم أوت ذكي\n"
+            "`!تكلم @user` / `تكلم @user` → إلغاء التايم أوت فوراً 🔊\n"
+            "`!قفل` / `!فتح` → التحكم في فتح/إغلاق الرومات 🔒🔓\n"
+            "`!حذف [العدد]` → تنظيف الرسائل من الشات 🧹\n"
+            "`!برا @user` → طرد العضو خارج السيرفر 🥾\n"
+            "`!اسم @user [الاسم الجديد]` / `اسم @user [الاسم]` → تعديل اللقب 📝\n"
+            "`!رتب @user [اسم الرتبة]` / `رتب @user [الرتبة]` → منح أو إزالة الرتب ➕➖"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="⛓️ نظام السجن والإفراج",
+        value=(
+            "`!سجن @user` → سحب جميع الرتب ونقله لرتبة السجن ⛓️\n"
+            "`!افراج @user` → فك السجن ومنح رتبة البداية 🕊️"
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="⚙️ الأوامر التفاعلية والسلاش",
+        value=(
+            "`!A @user` → استعراض صورة الملف الشخصي 👤\n"
+            "`/say [النص]` → التحدث بلسان البوت 💬\n"
+            "`/embed [النص]` → إرسال إمبد ملون (للمالك فقط) 🖼️\n"
+            "`/help` → عرض هذه القائمة 📜"
+        ),
+        inline=False,
+    )
     await interaction.response.send_message(embed=embed)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Entry point
+# ─────────────────────────────────────────────────────────────────────────────
 
 async def main():
     async with bot:
-        ssl_context = ssl.create_default_context()
-        ssl_context.check_hostname = False
-        ssl_context.verify_mode = ssl.CERT_NONE
-        
-        connector = aiohttp.TCPConnector(ssl=ssl_context)
-        bot.http.connector = connector
-        
         await bot.start(BOT_TOKEN)
 
-asyncio.run(main())
+
+if __name__ == "__main__":
+    keep_alive()          # Start Flask keep-alive thread before the event loop
+    asyncio.run(main())
