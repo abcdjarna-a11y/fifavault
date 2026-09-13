@@ -10,7 +10,11 @@ import re
 import random
 from threading import Thread
 from flask import Flask
-import google.generativeai as genai
+
+try:
+    from groq import Groq
+except ImportError:
+    Groq = None
 
 app = Flask('')
 
@@ -29,27 +33,19 @@ def keep_alive():
 keep_alive()
 
 MY_DISCORD_ID = 860215082541514752  
-ALLOWED_ROLE_IDS = []  # Put your moderator role IDs inside the brackets separated by commas
+ALLOWED_ROLE_IDS = []  
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+GROQ_KEY = os.environ.get("GROQ_API_KEY")
 JAIL_ROLE_ID = 1541262891468988416
 RELEASE_ROLE_ID = 1541192334115602483
 
 MEMBER_CHAT_CHANNEL_ID = 1547615336092668034
 ADMIN_CHAT_CHANNEL_ID = 1541609897953722468
 
-if GEMINI_KEY:
-    try:
-        genai.configure(api_key=GEMINI_KEY)
-        # Using gemini-1.5-flash as it is the standard stable long-term support model 
-        ai_model = genai.GenerativeModel('gemini-1.5-flash')
-        print("Gemini model configured successfully.")
-    except Exception as e:
-        print(f"Error configuring Gemini: {e}")
-        ai_model = None
+if GROQ_KEY and Groq:
+    ai_client = Groq(api_key=GROQ_KEY)
 else:
-    print("Warning: GEMINI_API_KEY environment variable not found.")
-    ai_model = None
+    ai_client = None
 
 intents = discord.Intents.default()
 intents.message_content = True  
@@ -102,7 +98,6 @@ async def on_message(message):
 
     clean_content = message.content.strip().lower()
 
-    # Smart Text Shortcut Interceptor (Triggers commands without '!')
     if clean_content.startswith(("اسكت ", "اص ", "تكلم ", "اسم ", "رتب ")):
         ctx = await bot.get_context(message)
         parts = message.content.split()
@@ -149,7 +144,6 @@ async def on_message(message):
                     await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
             return
 
-    # Regular Auto-Responses
     if clean_content in ["السلام عليكم", "سلام عليكم"]:
         await message.reply("**__ عليكم السلام ورحمه الله وبركاته __** 🤝🤍")
         return
@@ -175,38 +169,39 @@ async def on_message(message):
         await message.reply("تفضل رابط روم الدعم الفني والمساعدة: <#1541203674477371502> 🤝🆘")
         return
 
-    # Chatbot Processing and Room Filters
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         if not message.content.strip().startswith("!#") and not clean_content.startswith("!"):
             if message.channel.id in [MEMBER_CHAT_CHANNEL_ID, ADMIN_CHAT_CHANNEL_ID]:
-                if ai_model:
+                if ai_client:
                     async with message.channel.typing():
                         try:
                             prompt = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
                             if not prompt:
-                                await message.reply("لبيه? اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
+                                await message.reply("لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
                                 return
                             
-                            # Standard format for safety configurations
-                            safe_settings = [
-                                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
-                            ]
+                            chat_completion = ai_client.chat.completions.create(
+                                messages=[
+                                    {
+                                        "role": "system",
+                                        "content": "أنت بوت ذكي ومساعد تفاعلي محبوك لسيرفر ديسكورد، تتحدث بلهجة ودية واحترافية وتختصر الإجابات وتستخدم الإيموجيات."
+                                    },
+                                    {
+                                        "role": "user",
+                                        "content": prompt,
+                                    }
+                                ],
+                                model="llama3-8b-8192",
+                            )
                             
-                            response = ai_model.generate_content(prompt, safety_settings=safe_settings)
-                            
-                            if response.text:
-                                await message.reply(response.text)
-                            else:
-                                await message.reply("🤖 تم حجب الإجابة مسبقاً بواسطة فلاتر جوجل الذكية تلقائياً.")
+                            bot_response = chat_completion.choices.message.content
+                            await message.reply(bot_response)
                         except Exception as e:
                             print(f"CRITICAL CHATBOT ERROR LOG: {e}")
                             await message.reply("🤖 واجهت مشكلة في الخادم أثناء معالجة النص.")
                     return
                 else:
-                    await message.reply("⚙️ نظام الشات بوت قيد التجهيز من قبل الإدارة، يرجى تزويدي بمفتاح API أولاً.")
+                    await message.reply("⚙️ نظام الشات بوت قيد التجهيز من قبل الإدارة، يرجى تزويدي بمفتاح API الجديد.")
                     return
             else:
                 responses = [
