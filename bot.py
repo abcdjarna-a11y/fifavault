@@ -29,7 +29,7 @@ def keep_alive():
 keep_alive()
 
 MY_DISCORD_ID = 860215082541514752  
-ALLOWED_ROLE_IDS = []  
+ALLOWED_ROLE_IDS = []  # Put your moderator role IDs inside the brackets separated by commas, e.g. [1234, 5678]
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 JAIL_ROLE_ID = 1541262891468988416
@@ -95,6 +95,7 @@ async def on_message(message):
 
     clean_content = message.content.strip().lower()
 
+    # Smart Text Shortcut Interceptor (Triggers commands without '!')
     if clean_content.startswith(("اسكت ", "اص ", "تكلم ", "اسم ", "رتب ")):
         ctx = await bot.get_context(message)
         parts = message.content.split()
@@ -141,6 +142,7 @@ async def on_message(message):
                     await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
             return
 
+    # Regular Auto-Responses
     if clean_content in ["السلام عليكم", "سلام عليكم"]:
         await message.reply("**__ عليكم السلام ورحمه الله وبركاته __** 🤝🤍")
         return
@@ -166,6 +168,7 @@ async def on_message(message):
         await message.reply("تفضل رابط روم الدعم الفني والمساعدة: <#1541203674477371502> 🤝🆘")
         return
 
+    # Chatbot Processing and Room Filters
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         if not message.content.strip().startswith("!#") and not clean_content.startswith("!"):
             if message.channel.id in [MEMBER_CHAT_CHANNEL_ID, ADMIN_CHAT_CHANNEL_ID]:
@@ -176,11 +179,23 @@ async def on_message(message):
                             if not prompt:
                                 await message.reply("لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
                                 return
-                            response = ai_model.generate_content(prompt)
-                            await message.reply(response.text)
+                            
+                            safe_settings = [
+                                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+                            ]
+                            
+                            response = ai_model.generate_content(prompt, safety_settings=safe_settings)
+                            
+                            if response.text:
+                                await message.reply(response.text)
+                            else:
+                                await message.reply("🤖 تم حجب الإجابة مسبقاً بواسطة فلاتر جوجل الذكية تلقائياً.")
                         except Exception as e:
-                            print(f"AI Error: {e}")
-                            await message.reply("🤖 واجهت مشكلة صغيرة في استيعاب النص حالياً، يرجى المحاولة مرة أخرى!")
+                            print(f"CRITICAL CHATBOT ERROR LOG: {e}")
+                            await message.reply("🤖 واجهت مشكلة في الخادم أثناء معالجة النص.")
                     return
                 else:
                     await message.reply("⚙️ نظام الشات بوت قيد التجهيز من قبل الإدارة، يرجى تزويدي بمفتاح API أولاً.")
@@ -304,7 +319,7 @@ async def jail_user(ctx, member: discord.Member):
         return
     jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
     if not jail_role:
-        await ctx.send("❌ لم أتمكن من العثور على رتبة السجن في هذا السيرفر.")
+        await ctx.send("❌ لم أتمكن من العثور على رتبة السجن in هذا السيرفر.")
         return
     try:
         roles_to_remove = [role for role in member.roles if role != ctx.guild.default_role and not role.managed]
@@ -392,22 +407,32 @@ async def slash_help(interaction: discord.Interaction):
         color=discord.Color.green()
     )
     embed.add_field(name="🛡️ أوامر الإشراف والمراقبة (Prefix: !)", value=(
-        "`!اسكت @user [الوقت]` / `اسكت` / `اص` -> تايم أوت ذكي\n"
-        "`!تكلم @user` / `تكلم` -> إلغاء التايم أوت عن العضو تلقائياً وفوراً 🔊\n"
-        "`!قفل` / `!فتح` -> التحكم الفعال والمحمي في فتح وإغلاق الرومات 🔒🔓\n"
-        "`!حذف [العدد]` -> تنظيف وحذف الرسائل من الشات بسرعة 🧹\n"
-        "`!برا @user` -> طرد (Kick) العضو مباشرة خارج السيرفر 🥾\n"
-        "`!اسم @user [الاسم الجديد]` / `اسم` -> تعديل اللقب 📝\n"
+        "`!اسكت @user [الوقت]` / `اسكت` / `اص` -> تايم أوت ذكي
+"
+        "`!تكلم @user` / `تكلم` -> إلغاء التايم أوت عن العضو تلقائياً وفوراً 🔊
+"
+        "`!قفل` / `!فتح` -> التحكم الفعال والمحمي في فتح وإغلاق الرومات 🔒🔓
+"
+        "`!حذف [العدد]` -> تنظيف وحذف الرسائل من الشات بسرعة 🧹
+"
+        "`!برا @user` -> طرد (Kick) العضو مباشرة خارج السيرفر 🥾
+"
+        "`!اسم @user [الاسم الجديد]` / `اسم` -> تعديل اللقب 📝
+"
         "`!رتب @user [اسم الرتبة]` / `رتب` -> منح أو إزالة الرتب بالبحث الذكي ➕➖"
     ), inline=False)
     embed.add_field(name="⛓️ نظام السجن والإفراج", value=(
-        "`!سجن @user` -> سحب جميع الرتب ونقله لرتبة السجن المحددة ⛓️\n"
+        "`!سجن @user` -> سحب جميع الرتب ونقله لرتبة السجن المحددة ⛓️
+"
         "`!افراج @user` -> فك السجن عنه ومنحه الرتبة المحددة للبدء من جديد 🕊️"
     ), inline=False)
     embed.add_field(name="⚙️ الأوامر التفاعلية وأوامر السلاش (Slash Commands)", value=(
-        "`!A @user` -> استعراض صورة الملف الشخصي (Avatar) للعضو 👤\n"
-        "`/say [النص]` -> التحدث بلسان البوت وإرسال نصوص عادية في الروم 💬\n"
-        "`/embed [النص]` -> كتابة نصوص وتأطيرها داخل إمبد ملون فاخر (للمالك) 🖼️\n"
+        "`!A @user` -> استعراض صورة الملف الشخصي (Avatar) للعضو 👤
+"
+        "`/say [النص]` -> التحدث بلسان البوت وإرسال نصوص عادية في الروم 💬
+"
+        "`/embed [النص]` -> كتابة نصوص وتأطيرها داخل إمبد ملون فاخر (للمالك) 🖼️
+"
         "`/help` -> يعرض لك هذه القائمة المنظمة والإرشادية الرائعة 📜"
     ), inline=False)
     await interaction.response.send_message(embed=embed)
