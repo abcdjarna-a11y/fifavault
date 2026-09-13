@@ -60,7 +60,7 @@ async def on_message(message):
         return
 
     elif clean_content == "بنورك":
-        await message.reply("بنور نورك يا بعد قلبي 🤍🌹")
+        await message.reply("النور نورك يا بعد قلبي 🤍🌹")
         return
 
     elif bot.user.mentioned_in(message) and not message.mention_everyone:
