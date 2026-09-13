@@ -1,4 +1,4 @@
 discord.py
 aiohttp
 Flask
-google-generativeai
+groq
