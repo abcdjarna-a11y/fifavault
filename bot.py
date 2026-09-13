@@ -29,7 +29,7 @@ def keep_alive():
 keep_alive()
 
 MY_DISCORD_ID = 860215082541514752  
-ALLOWED_ROLE_IDS = []  
+ALLOWED_ROLE_IDS = []  # Put your moderator role IDs inside the brackets separated by commas
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 JAIL_ROLE_ID = 1541262891468988416
@@ -39,9 +39,16 @@ MEMBER_CHAT_CHANNEL_ID = 1547615336092668034
 ADMIN_CHAT_CHANNEL_ID = 1541609897953722468
 
 if GEMINI_KEY:
-    genai.configure(api_key=GEMINI_KEY)
-    ai_model = genai.GenerativeModel('gemini-2.5-flash')
+    try:
+        genai.configure(api_key=GEMINI_KEY)
+        # Using gemini-1.5-flash as it is the standard stable long-term support model 
+        ai_model = genai.GenerativeModel('gemini-1.5-flash')
+        print("Gemini model configured successfully.")
+    except Exception as e:
+        print(f"Error configuring Gemini: {e}")
+        ai_model = None
 else:
+    print("Warning: GEMINI_API_KEY environment variable not found.")
     ai_model = None
 
 intents = discord.Intents.default()
@@ -95,6 +102,7 @@ async def on_message(message):
 
     clean_content = message.content.strip().lower()
 
+    # Smart Text Shortcut Interceptor (Triggers commands without '!')
     if clean_content.startswith(("اسكت ", "اص ", "تكلم ", "اسم ", "رتب ")):
         ctx = await bot.get_context(message)
         parts = message.content.split()
@@ -141,6 +149,7 @@ async def on_message(message):
                     await ctx.send(f"❌ خطأ في معالجة الأمر: {e}")
             return
 
+    # Regular Auto-Responses
     if clean_content in ["السلام عليكم", "سلام عليكم"]:
         await message.reply("**__ عليكم السلام ورحمه الله وبركاته __** 🤝🤍")
         return
@@ -166,6 +175,7 @@ async def on_message(message):
         await message.reply("تفضل رابط روم الدعم الفني والمساعدة: <#1541203674477371502> 🤝🆘")
         return
 
+    # Chatbot Processing and Room Filters
     if bot.user.mentioned_in(message) and not message.mention_everyone:
         if not message.content.strip().startswith("!#") and not clean_content.startswith("!"):
             if message.channel.id in [MEMBER_CHAT_CHANNEL_ID, ADMIN_CHAT_CHANNEL_ID]:
@@ -174,13 +184,26 @@ async def on_message(message):
                         try:
                             prompt = message.content.replace(f'<@{bot.user.id}>', '').replace(f'<@!{bot.user.id}>', '').strip()
                             if not prompt:
-                                await message.reply("لبيه؟ اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
+                                await message.reply("لبيه? اكتب سؤالك مع المنشن وبجاوبك فوراً! 🧠✨")
                                 return
-                            response = ai_model.generate_content(prompt)
-                            await message.reply(response.text)
+                            
+                            # Standard format for safety configurations
+                            safe_settings = [
+                                {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                                {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                                {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                                {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
+                            ]
+                            
+                            response = ai_model.generate_content(prompt, safety_settings=safe_settings)
+                            
+                            if response.text:
+                                await message.reply(response.text)
+                            else:
+                                await message.reply("🤖 تم حجب الإجابة مسبقاً بواسطة فلاتر جوجل الذكية تلقائياً.")
                         except Exception as e:
-                            print(f"AI Error: {e}")
-                            await message.reply("🤖 واجهت مشكلة صغيرة في استيعاب النص حالياً، يرجى المحاولة مرة أخرى!")
+                            print(f"CRITICAL CHATBOT ERROR LOG: {e}")
+                            await message.reply("🤖 واجهت مشكلة في الخادم أثناء معالجة النص.")
                     return
                 else:
                     await message.reply("⚙️ نظام الشات بوت قيد التجهيز من قبل الإدارة، يرجى تزويدي بمفتاح API أولاً.")
