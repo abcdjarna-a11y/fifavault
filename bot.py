@@ -56,6 +56,7 @@ def save_warns(data):
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+intents.presences = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # ── Permission & Parsing Helpers ──────────────────────────────────────────────
@@ -262,9 +263,9 @@ async def on_message(message: discord.Message):
             "الإدارة تراقب الشات دائماً وتختار المتميزين، شد حيلك وبتكون معنا 🛡️"
         ],
         ("رابط السيرفر", "الرابط", "رابط انفاير", "رابط السيرفر للاصدقاء"): [
-            "تفضل يا غالي، هذا هو الرابط الدائم لدعوة أصدقائك: (رابط السيرفر) 🔗🔥",
-            "أنشر الرابط لربعك وخلنا نكبر سوا: (رابط السيرفر) 🔗✨",
-            "حيا الله من يجي من طرفك، تفضل الرابط: (رابط السيرفر) 🔗👑"
+            "تفضل يا غالي، هذا هو الرابط الدائم لدعوة أصدقائك: (https://discord.gg/gB7aAtUTyK) 🔗🔥",
+            "أنشر الرابط لربعك وخلنا نكبر سوا: (https://discord.gg/gB7aAtUTyK) 🔗✨",
+            "حيا الله من يجي من طرفك، تفضل الرابط: (https://discord.gg/gB7aAtUTyK) 🔗👑"
         ],
         ("وين القوانين", "القوانين", "قوانين السيرفر", "وين قوانين"): [
             "يا هلا بك! القوانين كاملة ومحدثة تجدها دائماً في روم <#1541195966105911368> 📜",
@@ -433,15 +434,18 @@ async def on_message(message: discord.Message):
 
 @bot.command(name="S", aliases=["s"])
 async def server_dashboard(ctx: commands.Context):
-    """Calculates general server metrics and checks live moderator statuses."""
+    """عرض لوحة معلومات السيرفر وحساب عدد المشرفين المتواجدين تلقائياً"""
     guild = ctx.guild
     if not guild: return
     
-    # Track matching server staff presence based on configured role ID bounds
-    mod_role = guild.get_role(MOD_ROLE_ID)
+    # Correct Role ID: 1541192320844566580 (Verified against the previous configurations)
+    TARGET_MOD_ROLE_ID = 1541192320844566580  
+    mod_role = guild.get_role(TARGET_MOD_ROLE_ID)
+    
     online_mods = 0
     if mod_role:
         for member in mod_role.members:
+            # Safe check: offline status or invisible members evaluate as offline, any other presence is active
             if member.status != discord.Status.offline:
                 online_mods += 1
 
@@ -451,7 +455,7 @@ async def server_dashboard(ctx: commands.Context):
     
     embed.add_field(name="👑 ملكية السيرفر", value=f"<@{guild.owner_id}>", inline=True)
     embed.add_field(name="👥 إجمالي الأعضاء", value=f"`{guild.member_count}` عضو", inline=True)
-    embed.add_field(name="🛡️ رتبة طاقم العمل", value=f"{mod_role.mention if mod_role else 'غير معرفة'}", inline=True)
+    embed.add_field(name="🛡️ رتبة طاقم العمل", value=f"{mod_role.mention if mod_role else '❌ لم يتم العثور على الرتبة'}", inline=True)
     embed.add_field(name="🟢 المشرفين المتصلين حالياً", value=f"`{online_mods}` مشرف جاهز", inline=True)
     embed.add_field(name="📁 رومات السيرفر", value=f"📝 نصي: `{len(guild.text_channels)}` | 🔊 صوتي: `{len(guild.voice_channels)}`", inline=False)
     embed.add_field(name="🏅 عدد الرتب الإجمالي", value=f"`{len(guild.roles) - 1}` رتبة مخصصة", inline=True)
