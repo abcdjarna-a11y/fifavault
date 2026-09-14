@@ -105,7 +105,7 @@ async def on_message(message: discord.Message):
     ctx = await bot.get_context(message)
 
     # ── 🛠️ Smart Multi-Context Warn Engine (Reply, Mention, & Alias Matching) ──
-    prefix_match = re.match(r"^(!?(وارن|و|شيل|ش|شيل_كل))\s*(.*)$", content, re.IGNORECASE)
+    prefix_match = re.match(r"^(!?(وارن|شيل|ش|شيل_كل))\s*(.*)$", content, re.IGNORECASE)
     
     if prefix_match:
         base_cmd = prefix_match.group(2).lower() if prefix_match.group(2) else ""
@@ -114,8 +114,8 @@ async def on_message(message: discord.Message):
             
         remainder = prefix_match.group(3).strip()
         
-        # 1. Processing Warnings (وارن / و)
-        if base_cmd in ("وارن", "و"):
+        # 1. Processing Warnings (وارن)
+        if base_cmd in ("وارن"):
             if not check_permissions(ctx): return
             
             target_member = None
