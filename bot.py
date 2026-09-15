@@ -32,12 +32,9 @@ MOD_ROLE_ID         = 1541192320844566580  # Role ID to track online moderators
 BOT_TOKEN           = os.environ.get("DISCORD_TOKEN", "")
 JAIL_ROLE_ID        = 1541262891468988416
 RELEASE_ROLE_ID     = 1541192334115602483
+ALLOWED_AUTO_REPLY_CHANNELS = [1547615336092668034, 1541609897953722468,1541276089848954961
 
-# Channels config
-MEMBER_CHAT_CHANNEL_ID = 1547615336092668034
-ADMIN_CHAT_CHANNEL_ID  = 1541609897953722468
-
-# ── Local Simple JSON Database for Warns ──────────────────────────────────────
+JAIL_FILE = "jail_data.json"                            
 WARN_FILE = "warns_data.json"
 
 def load_warns():
@@ -51,6 +48,19 @@ def load_warns():
 
 def save_warns(data):
     with open(WARN_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+def load_jail():
+    if os.path.exists(JAIL_FILE):
+        try:
+            with open(JAIL_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+def save_jail(data):
+    with open(JAIL_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
 intents = discord.Intents.default()
@@ -104,24 +114,21 @@ async def on_message(message: discord.Message):
     clean_content = clean_arabic_text(content)
     ctx = await bot.get_context(message)
 
-    # ── 🛠️ Smart Multi-Context Warn Engine (Reply, Mention, & Alias Matching) ──
-    prefix_match = re.match(r"^(!?(وارن|شيل|ش|شيل_كل))\s*(.*)$", content, re.IGNORECASE)
+        # ── 🛠️ Smart Multi-Context Warn Engine (Word Boundary Fix Applied) ──
+    prefix_match = re.match(r"^(!?(وارن|شيل|شيل_كل))\b(?:\s*(.*))?$", content, re.IGNORECASE)
     
     if prefix_match:
-        base_cmd = prefix_match.group(2).lower() if prefix_match.group(2) else ""
-        if "شيل_كل" in prefix_match.group(1).lower():
-            base_cmd = "شيل_كل"
-            
-        remainder = prefix_match.group(3).strip()
+        base_cmd = prefix_match.group(2).lower()
+        remainder = prefix_match.group(3).strip() if prefix_match.group(3) else ""
         
         # 1. Processing Warnings (وارن)
-        if base_cmd in ("وارن"):
+        if base_cmd == "وارن":
             if not check_permissions(ctx): return
             
             target_member = None
             reason = "لا يوجد سبب محدد"
             
-            # Case A: Execution via Message Reply Context
+            # Case A: Message Reply Context
             if message.reference and message.reference.message_id:
                 try:
                     ref_msg = await message.channel.fetch_message(message.reference.message_id)
@@ -129,7 +136,7 @@ async def on_message(message: discord.Message):
                     reason = remainder if remainder else f"مخالفة رسالة: {ref_msg.content[:30]}..."
                 except: pass
             
-            # Case B: Execution via Direct User Mention
+            # Case B: Direct User Mention
             if not target_member and message.mentions:
                 target_member = message.mentions[0]
                 reason_clean = re.sub(r"<@!?\d+>", "", remainder).strip()
@@ -154,16 +161,11 @@ async def on_message(message: discord.Message):
                 warns_data[user_id_str].append(warn_entry)
                 save_warns(warns_data)
                 
-                embed = discord.Embed(title="⚠️ تسجيل تحذير رسمي جديد", color=discord.Color.red())
-                embed.add_field(name="العضو المخالف", value=target_member.mention, inline=True)
-                embed.add_field(name="بواسطة المشرف", value=message.author.mention, inline=True)
-                embed.add_field(name="السبب الكامل", value=reason, inline=False)
-                embed.add_field(name="رقم التحذير الحالي", value=f"#{warn_entry['warn_id']}", inline=True)
-                await message.reply(embed=embed)
+                await message.reply(f"تم إعطاء لـ {target_member.mention} وارن\nبسبب: [{reason}]")
                 return
             
-        # 2. Removing an Infraction Index (شيل / ش)
-        elif base_cmd in ("شيل", "ش"):
+        # 2. Removing an Infraction Index (شيل)
+        elif base_cmd in ("شيل"):
             if not check_permissions(ctx): return
             if message.mentions and remainder:
                 target = message.mentions[0]
@@ -200,6 +202,7 @@ async def on_message(message: discord.Message):
                     save_warns(warns_data)
                 await message.reply(f"🧹 تم تصفير سجل التحذيرات بالكامل وإعادة العداد للصفر لـ {target.mention}.")
                 return
+
     # ── 💬 Automated Smart Replies Dictionary with 3 Randomized Options Each ──
     KEYWORD_REPLIES = {
         ("السلام عليكم", "سلام عليكم", "سلامون عليكم", "الاسم عليكم", "اسلام عليكم"): [
@@ -665,8 +668,102 @@ async def kick_user(ctx: commands.Context, member: discord.Member, *, reason: st
     except Exception:
         await ctx.send("❌ Failed to complete operation parameters.")
 
+@bot.command(name="سجن")
+async def jail_member(ctx: commands.Context, member: discord.Member, *, reason: str = "لا يوجد سبب محدد"):
+    """يسحب كافة الرتب ويمنح رتبة السجن مع الإبقاء على رتبة الاستثناء المحددة"""
+    if not check_permissions(ctx): return
+    if member.id == MY_DISCORD_ID or member.bot:
+        await ctx.send("❌ لا يمكنك سجن هذا العضو!")
+        return
 
-# ── Client Runtime Loop Container Bootstrapper ────────────────────────────────
+    jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
+    release_role = ctx.guild.get_role(RELEASE_ROLE_ID)
+    
+    if not jail_role:
+        await ctx.send("❌ رتبة السجن المحددة غير موجودة بالسيرفر.")
+        return
+
+    saved_data = load_jail()
+    old_role_ids = [role.id for role in member.roles if role != ctx.guild.default_role and role.id != JAIL_ROLE_ID]
+    
+    if old_role_ids:
+        saved_data[str(member.id)] = old_role_ids
+        save_jail(saved_data)
+
+    keep_roles = []
+    if release_role and release_role in member.roles:
+        keep_roles.append(release_role)
+    
+    keep_roles.append(jail_role)
+
+    try:
+        await member.edit(roles=keep_roles, reason=f"سجن بواسطة {ctx.author.name} | السبب: {reason}")
+        await ctx.send(f"⛓️ تم سجن {member.mention} بنجاح وسحب رتبه، بسبب: [{reason}]")
+    except Exception as e:
+        await ctx.send(f"❌ حدث خطأ أثناء تطبيق نظام السجن: {e}")
+
+@bot.command(name="افراج")
+async def unjail_member(ctx: commands.Context, member: discord.Member):
+    """إزالة رتبة السجن وإعادة الرتب السابقة تلقائياً من الملف المحفوظ"""
+    if not check_permissions(ctx): return
+    
+    jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
+    saved_data = load_jail()
+    uid_str = str(member.id)
+    
+    roles_to_restore = []
+    if uid_str in saved_data:
+        for r_id in saved_data[uid_str]:
+            role = ctx.guild.get_role(r_id)
+            if role and not role.is_default():
+                roles_to_restore.append(role)
+        del saved_data[uid_str]
+        save_jail(saved_data)
+
+    try:
+        if jail_role and jail_role in member.roles:
+            await member.remove_roles(jail_role, reason=f"إفراج بواسطة {ctx.author.name}")
+        
+        if roles_to_restore:
+            await member.add_roles(*roles_to_restore, reason="استعادة الرتب بعد الإفراج")
+            
+        await ctx.send(f"🕊️ تم الإفراج عن {member.mention} وإعادة رتبه السابقة كاملة بنجاح.")
+    except Exception as e:
+        await ctx.send(f"❌ فشل إتمام عملية الإفراج: {e}")
+
+@bot.command(name="قفل")
+async def lock_channel(ctx: commands.Context):
+    """يغلق صلاحية إرسال الرسائل للرتبة العامة مع إبقاء الروم مرئية للجميع"""
+    if not check_permissions(ctx): return
+    
+    everyone_role = ctx.guild.default_role
+    current_overwrite = ctx.channel.overwrites_for(everyone_role)
+    
+    current_overwrite.send_messages = False
+    current_overwrite.view_channel = True 
+    
+    try:
+        await ctx.channel.set_permissions(everyone_role, overwrite=current_overwrite, reason=f"قفل بواسطة {ctx.author.name}")
+        await ctx.send("🔒 **تم قفل الروم بنجاح!** (الجميع يمكنهم رؤية الشات، لكن يمنع الإرسال).")
+    except Exception as e:
+        await ctx.send(f"❌ فشل قفل الروم: {e}")
+
+@bot.command(name="فتح")
+async def unlock_channel(ctx: commands.Context):
+    """يفتح صلاحية إرسال الرسائل للجميع مجدداً"""
+    if not check_permissions(ctx): return
+    
+    everyone_role = ctx.guild.default_role
+    current_overwrite = ctx.channel.overwrites_for(everyone_role)
+    
+    current_overwrite.send_messages = True
+    current_overwrite.view_channel = True
+    
+    try:
+        await ctx.channel.set_permissions(everyone_role, overwrite=current_overwrite, reason=f"فتح بواسطة {ctx.author.name}")
+        await ctx.send("🔓 **تم فتح الروم بنجاح!** بإمكان الجميع الإرسال الآن.")
+    except Exception as e:
+        await ctx.send(f"❌ فشل فتح الروم: {e}")
 
 async def main():
     async with bot: 
