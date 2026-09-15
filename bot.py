@@ -727,7 +727,7 @@ async def unjail_member(ctx: commands.Context, member: discord.Member):
         if roles_to_restore:
             await member.add_roles(*roles_to_restore, reason="استعادة الرتب بعد الإفراج")
             
-        await ctx.send(f"🕊️ تم الإفراج عن {member.mention} وإعادة رتبه السابقة كاملة بنجاح.")
+        await ctx.send(f"**__ 🕊️ تم الإفراج عن {member.mention} وإعادة رتبه السابقة كاملة بنجاح.__**")
     except Exception as e:
         await ctx.send(f"❌ فشل إتمام عملية الإفراج: {e}")
 
