@@ -161,7 +161,7 @@ async def on_message(message: discord.Message):
                 warns_data[user_id_str].append(warn_entry)
                 save_warns(warns_data)
                 
-                await message.reply(f"تم إعطاء لـ {target_member.mention} وارن\nبسبب: [{reason}]")
+                await message.reply(f" **__ تم إعطاء لـ {target_member.mention} ⚠️ وارن\nبسبب: [{reason}] 📋 __** ")
                 return
             
         # 2. Removing an Infraction Index (شيل)
@@ -183,7 +183,7 @@ async def on_message(message: discord.Message):
                         for idx, entry in enumerate(warns_data[uid]):
                             entry["warn_id"] = idx + 1
                         save_warns(warns_data)
-                        await message.reply(f"✅ تم حذف التحذير رقم #{warn_num} بنجاح عن {target.mention}.")
+                        await message.reply(f"**__ ✅ تم حذف التحذير رقم #{warn_num} بنجاح عن {target.mention}.__** ")
                     else:
                         await message.reply("❌ لم يتم العثور على هذا التحذير المحدد للعضو.")
                 else:
@@ -644,7 +644,7 @@ async def rename(ctx: commands.Context, *, new_name: str):
     if not check_permissions(ctx): return
     try: 
         await ctx.channel.edit(name=new_name)
-        await ctx.send(f"✅ Channel renamed to **{new_name}** 📝")
+        await ctx.send(f"**__ ✅ Channel renamed to **{new_name}** 📝 __** ")
     except Exception: 
         await ctx.send("❌ Failed to rename channel.")
 
@@ -664,7 +664,7 @@ async def kick_user(ctx: commands.Context, member: discord.Member, *, reason: st
     if not check_permissions(ctx): return
     try:
         await member.kick(reason=reason)
-        await ctx.send(f"🥾 Kicked {member.mention} successfully from server environment bounds.")
+        await ctx.send(f"**__ 🥾 Kicked {member.mention} successfully from server environment bounds ✅ __** ")
     except Exception:
         await ctx.send("❌ Failed to complete operation parameters.")
 
@@ -673,7 +673,7 @@ async def jail_member(ctx: commands.Context, member: discord.Member, *, reason: 
     """يسحب كافة الرتب ويمنح رتبة السجن مع الإبقاء على رتبة الاستثناء المحددة"""
     if not check_permissions(ctx): return
     if member.id == MY_DISCORD_ID or member.bot:
-        await ctx.send("❌ لا يمكنك سجن هذا العضو!")
+        await ctx.send("**__ 😊❌ لا يمكنك سجن هذا العضو!")
         return
 
     jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
@@ -698,7 +698,7 @@ async def jail_member(ctx: commands.Context, member: discord.Member, *, reason: 
 
     try:
         await member.edit(roles=keep_roles, reason=f"سجن بواسطة {ctx.author.name} | السبب: {reason}")
-        await ctx.send(f"⛓️ تم سجن {member.mention} بنجاح وسحب رتبه، بسبب: [{reason}]")
+        await ctx.send(f"**__ ⛓️ تم سجن {member.mention} بنجاح وسحب رتبه، بسبب: [{reason}] __** ")
     except Exception as e:
         await ctx.send(f"❌ حدث خطأ أثناء تطبيق نظام السجن: {e}")
 
