@@ -37,7 +37,7 @@ def keep_alive():
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 MY_DISCORD_ID = 860215082541514752
-ALLOWED_ROLE_IDS = [1541583386441809950]
+ALLOWED_ROLE_IDS = [1541583386441809950, 1541192296308023389]
 MOD_ROLE_ID = 1541192320844566580
 BOT_TOKEN = os.environ.get("DISCORD_TOKEN", "")
 JAIL_ROLE_ID = 1541262891468988416
@@ -112,12 +112,12 @@ bot = commands.Bot(command_prefix="!", intents=intents, help_command=None)
 def check_permissions(ctx: commands.Context) -> bool:
     if ctx.author.id == MY_DISCORD_ID:
         return True
-    return bool({r.id for r in getattr(ctx.author, "roles", [])} & set(ALLOWED_ROLE_IDS))
+    return bool({r.id for r in getattr(ctx.author, "roles", [])} & (set(ALLOWED_ROLE_IDS) | {MOD_ROLE_ID}))
 
 def check_slash_permissions(interaction: discord.Interaction) -> bool:
     if interaction.user.id == MY_DISCORD_ID:
         return True
-    return bool({r.id for r in getattr(interaction.user, "roles", [])} & set(ALLOWED_ROLE_IDS))
+    return bool({r.id for r in getattr(interaction.user, "roles", [])} & (set(ALLOWED_ROLE_IDS) | {MOD_ROLE_ID}))
 
 def is_owner(user) -> bool:
     return getattr(user, "id", None) == MY_DISCORD_ID
@@ -194,6 +194,10 @@ async def jail_member_action(ctx_or_interaction, member: discord.Member, reason:
     jail_role = guild.get_role(JAIL_ROLE_ID)
     release_role = guild.get_role(RELEASE_ROLE_ID)
     if not jail_role:
+        return False
+    # Never attempt to assign a role that is above the bot's highest role.
+    me = guild.me
+    if me and jail_role >= me.top_role:
         return False
     saved_data = load_jail()
     old_role_ids = [r.id for r in member.roles if not r.is_default() and r.id != JAIL_ROLE_ID]
@@ -362,80 +366,97 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
+    """Keep Auto Replies while always allowing discord.py prefix commands to run."""
     if message.author.bot:
         return
-    content = message.content.strip()
-    clean_content = clean_arabic_text(content)
-    ctx = await bot.get_context(message)
 
-    # Warn aliases are intentionally handled here so Arabic commands work
-    # exactly as before, while the new rules are enforced.
-    prefix_match = re.match(r"^!?(وارن|شيل|شيل_كل)\b(?:\s*(.*))?$", content, re.IGNORECASE)
-    if prefix_match:
-        base_cmd = prefix_match.group(1).lower()
-        remainder = (prefix_match.group(2) or "").strip()
-        if base_cmd == "وارن":
-            if not check_permissions(ctx):
-                return
-            target_member = None
-            if message.reference and message.reference.message_id:
-                try:
-                    ref_msg = await message.channel.fetch_message(message.reference.message_id)
-                    target_member = ref_msg.author
-                except Exception:
-                    pass
-            if not target_member and message.mentions:
-                target_member = message.mentions[0]
-            reason = re.sub(r"<@!?(\d+)>", "", remainder).strip()
-            if not target_member:
-                await message.reply(bold_msg("استخدم الأمر هكذا: !وارن @user [السبب]", "⚠️"))
-                return
-            if not reason:
-                await message.reply(bold_msg("لا يمكن إعطاء وارن بدون سبب واضح.", "❌"))
-                return
-            if target_member.bot or target_member.id == MY_DISCORD_ID:
-                await message.reply(bold_msg("لا يمكنك إعطاء وارن لهذا الحساب.", "❌"))
-                return
-            warns = load_warns()
-            uid = str(target_member.id)
-            warns.setdefault(uid, [])
-            next_id = max([int(x.get("warn_id", 0)) for x in warns[uid]] or [0]) + 1
-            entry = {"warn_id": next_id, "moderator": message.author.name, "moderator_id": message.author.id, "reason": reason, "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")}
-            warns[uid].append(entry)
-            save_warns(warns)
-            await message.reply(bold_msg(f"تم إعطاء {target_member.mention} وارن بنجاح\nالسبب: {reason}", "✅"))
-            return
-        if base_cmd == "شيل":
-            if not check_permissions(ctx):
-                return
-            if not message.mentions:
-                await message.reply(bold_msg("استخدم الأمر هكذا: !شيل @user", "⚠️"))
-                return
-            target = message.mentions[0]
-            warns = load_warns()
-            uid = str(target.id)
-            if warns.get(uid):
-                del warns[uid]
-                save_warns(warns)
-                await message.reply(bold_msg(f"تم حذف جميع تحذيرات {target.mention} بنجاح.", "🧹"))
-            else:
-                await message.reply(bold_msg(f"لا يوجد تحذيرات مسجلة على {target.mention}.", "ℹ️"))
-            return
-        if base_cmd == "شيل_كل":
-            if not check_permissions(ctx):
-                return
-            warns = load_warns()
-            count = sum(len(v) for v in warns.values() if isinstance(v, list))
-            save_warns({})
-            await message.reply(bold_msg(f"تم حذف جميع تحذيرات أعضاء السيرفر ({count} تحذير).", "🧹"))
-            return
+    try:
+        content = message.content.strip()
+        clean_content = clean_arabic_text(content)
 
-    # Preserve the existing exact-match Auto Replies.
-    for keys, replies in KEYWORD_REPLIES.items():
-        if clean_content in [clean_arabic_text(k) for k in keys]:
-            await message.reply(random.choice(replies))
-            return
-    await bot.process_commands(message)
+        # Preserve the existing Auto Replies exactly as an exact-match system.
+        for keys, replies in KEYWORD_REPLIES.items():
+            if clean_content in [clean_arabic_text(k) for k in keys]:
+                await message.reply(random.choice(replies))
+                return
+    except Exception as e:
+        print("Auto-reply error:", repr(e))
+
+    # IMPORTANT: because on_message is overridden, commands.process_commands()
+    # must be called manually. Without this, almost every prefix command stops.
+    try:
+        await bot.process_commands(message)
+    except Exception as e:
+        print("Prefix command processing error:", repr(e))
+
+# ============================================================================
+# Warn commands
+# ============================================================================
+@bot.command(name="وارن")
+async def warn_member(ctx: commands.Context, member: discord.Member = None, *, reason: str = None):
+    if not check_permissions(ctx):
+        await ctx.send(bold_msg("ليس لديك صلاحية إعطاء وارن.", "🔒"))
+        return
+    if member is None:
+        # Preserve the useful reply-to-message behavior from the old bot.
+        if ctx.message.reference and ctx.message.reference.message_id:
+            try:
+                ref = await ctx.channel.fetch_message(ctx.message.reference.message_id)
+                member = ref.author
+            except Exception:
+                member = None
+    if member is None:
+        await ctx.send(bold_msg("استخدم الأمر هكذا: !وارن @user [السبب]", "⚠️"))
+        return
+    reason = (reason or "").strip()
+    if not reason:
+        await ctx.send(bold_msg("لا يمكن إعطاء وارن بدون سبب واضح.", "❌"))
+        return
+    if member.bot or member.id == MY_DISCORD_ID:
+        await ctx.send(bold_msg("لا يمكنك إعطاء وارن لهذا الحساب.", "❌"))
+        return
+
+    warns = load_warns()
+    uid = str(member.id)
+    warns.setdefault(uid, [])
+    next_id = max((int(x.get("warn_id", 0)) for x in warns[uid] if isinstance(x, dict)), default=0) + 1
+    warns[uid].append({
+        "warn_id": next_id,
+        "moderator": ctx.author.name,
+        "moderator_id": ctx.author.id,
+        "reason": reason,
+        "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    })
+    save_warns(warns)
+    await ctx.send(bold_msg(f"تم إعطاء {member.mention} وارن بنجاح • السبب: {reason}", "✅"))
+
+@bot.command(name="شيل")
+async def remove_member_warns(ctx: commands.Context, member: discord.Member = None):
+    if not check_permissions(ctx):
+        await ctx.send(bold_msg("ليس لديك صلاحية حذف التحذيرات.", "🔒"))
+        return
+    if member is None:
+        await ctx.send(bold_msg("استخدم الأمر هكذا: !شيل @user", "⚠️"))
+        return
+    warns = load_warns()
+    uid = str(member.id)
+    if uid not in warns or not warns[uid]:
+        await ctx.send(bold_msg(f"لا توجد تحذيرات مسجلة على {member.mention}.", "ℹ️"))
+        return
+    count = len(warns[uid])
+    del warns[uid]
+    save_warns(warns)
+    await ctx.send(bold_msg(f"تم حذف جميع تحذيرات {member.mention} بنجاح • العدد: {count}", "🧹"))
+
+@bot.command(name="شيل_كل")
+async def remove_all_server_warns(ctx: commands.Context):
+    if not check_permissions(ctx):
+        await ctx.send(bold_msg("ليس لديك صلاحية حذف تحذيرات السيرفر.", "🔒"))
+        return
+    warns = load_warns()
+    count = sum(len(v) for v in warns.values() if isinstance(v, list))
+    save_warns({})
+    await ctx.send(bold_msg(f"تم حذف جميع تحذيرات أعضاء السيرفر بنجاح • العدد: {count}", "🧹"))
 
 # ==============================================================================
 # Dashboards
@@ -1147,25 +1168,41 @@ async def jail_member(ctx,member: discord.Member,*,reason: str="لا يوجد س
     if member.id==MY_DISCORD_ID or member.bot:
         await ctx.send(bold_msg("لا يمكنك سجن هذا العضو.","❌")); return
     try:
-        await jail_member_action(ctx,member,reason)
+        ok = await jail_member_action(ctx,member,reason)
+        if not ok:
+            await ctx.send(bold_msg("تعذر تنفيذ السجن. تأكد من وجود رتبة السجن وأنها أسفل أعلى رتبة للبوت.","❌"))
+            return
         await ctx.send(bold_msg(f"تم سجن {member.mention} بنجاح • السبب: {reason}","⛓️"))
     except discord.Forbidden: await ctx.send(bold_msg("لا أملك صلاحية إدارة رتب هذا العضو.","❌"))
     except Exception as e: await ctx.send(bold_msg(f"حدث خطأ أثناء السجن: {e}","❌"))
 
 @bot.command(name="افراج")
-async def unjail_member(ctx,member: discord.Member):
-    if not check_permissions(ctx): return
-    jail_role=ctx.guild.get_role(JAIL_ROLE_ID); saved=load_jail(); uid=str(member.id); roles=[]
+async def unjail_member(ctx: commands.Context, member: discord.Member):
+    if not check_permissions(ctx):
+        await ctx.send(bold_msg("ليس لديك صلاحية الإفراج.", "🔒"))
+        return
+    jail_role = ctx.guild.get_role(JAIL_ROLE_ID)
+    saved = load_jail()
+    uid = str(member.id)
+    roles = []
     if uid in saved:
         for rid in saved[uid]:
-            r=ctx.guild.get_role(rid)
-            if r and not r.is_default(): roles.append(r)
-        del saved[uid]; save_jail(saved)
+            role = ctx.guild.get_role(rid)
+            if role and not role.is_default():
+                roles.append(role)
     try:
-        if jail_role and jail_role in member.roles: await member.remove_roles(jail_role,reason=f"إفراج بواسطة {ctx.author.name}")
-        if roles: await member.add_roles(*roles,reason="استعادة الرتب بعد الإفراج")
-        await ctx.send(bold_msg(f"تم الإفراج عن {member.mention} وإعادة رتبه السابقة.","🕊️"))
-    except Exception as e: await ctx.send(bold_msg(f"فشل الإفراج: {e}","❌"))
+        if jail_role and jail_role in member.roles:
+            await member.remove_roles(jail_role, reason=f"إفراج بواسطة {ctx.author.name}")
+        if roles:
+            await member.add_roles(*roles, reason="استعادة الرتب بعد الإفراج")
+        if uid in saved:
+            del saved[uid]
+            save_jail(saved)
+        await ctx.send(bold_msg(f"تم الإفراج عن {member.mention} وإعادة رتبه السابقة بنجاح.", "🕊️"))
+    except discord.Forbidden:
+        await ctx.send(bold_msg("لا أملك صلاحية إعادة رتب هذا العضو.", "❌"))
+    except Exception as e:
+        await ctx.send(bold_msg(f"فشل الإفراج: {e}", "❌"))
 
 @bot.command(name="قفل")
 async def lock_channel(ctx):
@@ -1195,13 +1232,23 @@ async def unlock_channel(ctx):
 # Error handler and runtime
 # ==============================================================================
 @bot.event
-async def on_command_error(ctx,error):
-    if isinstance(error,commands.CommandNotFound): return
-    if isinstance(error,commands.MissingRequiredArgument):
-        await ctx.send(bold_msg(f"المعامل ناقص: `{error.param.name}`.","⚠️")); return
-    if isinstance(error,commands.BadArgument):
-        await ctx.send(bold_msg("تعذر فهم أحد المعاملات. تأكد من منشن العضو وصيغة الأمر.","⚠️")); return
-    print("Command error:",repr(error))
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        return
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(bold_msg(f"المعامل ناقص: `{error.param.name}`.", "⚠️"))
+        return
+    if isinstance(error, commands.BadArgument):
+        await ctx.send(bold_msg("تعذر فهم أحد المعاملات. تأكد من منشن العضو وصيغة الأمر.", "⚠️"))
+        return
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send(bold_msg("ليس لديك صلاحية استخدام هذا الأمر.", "🔒"))
+        return
+    print("Command error:", repr(error))
+    try:
+        await ctx.send(bold_msg("حدث خطأ غير متوقع أثناء تنفيذ الأمر. راجع Console لمعرفة التفاصيل.", "❌"))
+    except Exception:
+        pass
 
 async def main():
     async with bot:
