@@ -452,7 +452,9 @@ async def on_ready():
 
 @bot.event
 async def on_message(message: discord.Message):
-    """Keep Auto Replies while always allowing discord.py prefix commands to run."""
+    """Keep Auto Replies while always allowing discord.py prefix commands to run.
+    Supports BOTH !شيل and شيل (prefix-less) by checking if the message content
+    matches a known command name directly and re-processing with the prefix."""
     if message.author.bot:
         return
 
@@ -460,13 +462,26 @@ async def on_message(message: discord.Message):
         content = message.content.strip()
         clean_content = clean_arabic_text(content)
 
-        # FIX #3: O(1) lookup in pre-built dict instead of O(n*k) loop with normalization
+        # Auto-reply lookup (O(1))
         if clean_content in KEYWORD_REPLIES_CLEANED:
             replies = KEYWORD_REPLIES_CLEANED[clean_content]
             await message.reply(random.choice(replies))
             return
+
+        # ── PREFIX-LESS COMMAND SUPPORT ──────────────────────────────────────────
+        # If the message does NOT start with the bot prefix ("!") but its
+        # content exactly matches a registered command name, synthesise the
+        # prefix so process_commands picks it up normally.
+        # This restores the original behaviour where typing شيل (no !) worked.
+        if not content.startswith("!"):
+            # Extract the first word as the potential command name
+            first_word = content.split()[0] if content.split() else ""
+            cmd = bot.get_command(first_word)
+            if cmd is not None:
+                # Rebuild the message content with the prefix prepended
+                message.content = "!" + content
     except Exception as e:
-        print("Auto-reply error:", repr(e))
+        print("Auto-reply/prefix-less error:", repr(e))
 
     # IMPORTANT: process_commands must be called manually when on_message is overridden.
     try:
@@ -477,7 +492,7 @@ async def on_message(message: discord.Message):
 # ==============================================================================
 # Warn commands  (aliases added per requirement)
 # ==============================================================================
-@bot.command(name="وارن", aliases=["وارن"])
+@bot.command(name="وارن")
 async def warn_member(ctx: commands.Context, member: discord.Member = None, *, reason: str = None):
     if not check_permissions(ctx):
         await ctx.send(bold_msg("ليس لديك صلاحية إعطاء وارن.", "🔒"))
@@ -515,7 +530,7 @@ async def warn_member(ctx: commands.Context, member: discord.Member = None, *, r
     await save_warns(warns)
     await ctx.send(bold_msg(f"تم إعطاء {member.mention} وارن بنجاح • السبب: {reason}", "✅"))
 
-@bot.command(name="شيل", aliases=["شيل"])
+@bot.command(name="شيل")
 async def remove_member_warns(ctx: commands.Context, member: discord.Member = None):
     if not check_permissions(ctx):
         await ctx.send(bold_msg("ليس لديك صلاحية حذف التحذيرات.", "🔒"))
@@ -567,7 +582,7 @@ async def server_set(interaction: discord.Interaction, role: discord.Role):
         ephemeral=True
     )
 
-@bot.command(name="S", aliases=["s"])
+@bot.command(name="S")
 async def server_dashboard(ctx: commands.Context):
     guild = ctx.guild
     if not guild:
@@ -596,7 +611,7 @@ async def server_dashboard(ctx: commands.Context):
     embed.set_footer(text="TOUCHLINE • FIFA VAULT")
     await ctx.send(embed=embed)
 
-@bot.command(name="U", aliases=["u"])
+@bot.command(name="U")
 async def user_dashboard(ctx: commands.Context, member: discord.Member = None):
     target = member or ctx.author
     roles = [r.mention for r in target.roles if not r.is_default()]
@@ -607,7 +622,7 @@ async def user_dashboard(ctx: commands.Context, member: discord.Member = None):
     embed.add_field(name="🎖️ الرتب", value=", ".join(roles) if roles else "لا توجد", inline=False)
     await ctx.send(embed=embed)
 
-@bot.command(name="عملة", aliases=["عمله"])
+@bot.command(name="عملة")
 async def coin_flip_advanced(ctx: commands.Context):
     if random.randint(1, 100) == 1:
         result = "العملة وقفت بالنص وضاعت الرمية! 😂"
@@ -659,7 +674,7 @@ class TimeoutView(discord.ui.View):
         self.add_item(TimeoutSelect(target, author_id))
 
 # FIX ALIASES: !اسكت aliases: تايم, اسكت, اص
-@bot.command(name="اسكت", aliases=["تايم", "اص"])
+@bot.command(name="اسكت")
 async def mute_command(ctx: commands.Context, member: discord.Member = None, duration: str = None):
     if not check_permissions(ctx):
         return
@@ -689,7 +704,7 @@ async def mute_command(ctx: commands.Context, member: discord.Member = None, dur
         await ctx.send(bold_msg(result, "❌"))
 
 # FIX ALIAS: تكلم
-@bot.command(name="تكلم", aliases=["تكلم"])
+@bot.command(name="تكلم")
 async def unmute_command(ctx: commands.Context, member: discord.Member = None):
     if not check_permissions(ctx):
         return
@@ -702,7 +717,7 @@ async def unmute_command(ctx: commands.Context, member: discord.Member = None):
     else:
         await ctx.send(bold_msg(error, "❌"))
 
-@bot.command(name="عمر", aliases=["عمر_الحساب", "accountage"])
+@bot.command(name="عمر")
 async def account_age(ctx: commands.Context, member: discord.Member = None):
     target = member or ctx.author
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -947,7 +962,7 @@ async def check_warns(ctx, member: discord.Member = None):
     await ctx.send(bold_msg(f"{target.mention} لديه {len(user_warns)} وارن.", "📋"))
 
 # FIX ALIAS: وارنات
-@bot.command(name="وارنات", aliases=["وارنات"])
+@bot.command(name="وارنات")
 async def show_all_warns(ctx):
     if not check_permissions(ctx):
         return
@@ -1038,7 +1053,7 @@ class WhoAmIView(discord.ui.View):
         await interaction.response.send_message(bold_msg(f"الإجابة هي: {self.answer}", "🎯"), ephemeral=True)
         self.stop()
 
-@bot.command(name="من_انا", aliases=["منانا", "مين_انا"])
+@bot.command(name="من_انا")
 async def who_am_i(ctx):
     answer, clues = random.choice(WHO_AM_I)
     random.shuffle(clues)
@@ -1088,7 +1103,7 @@ class WordleGame:
     def board(self):
         return "\n".join(self.rows + ["⬜" * WORDLE_LEN] * (6 - len(self.rows)))
 
-@bot.command(name="wordle", aliases=["وردل"])
+@bot.command(name="wordle")
 async def wordle(ctx):
     game = WordleGame(ctx.channel.id, ctx.author.id)
     embed = discord.Embed(
@@ -1177,7 +1192,7 @@ class XOView(discord.ui.View):
             btn.callback = callback
             self.add_item(btn)
 
-@bot.command(name="xo", aliases=["اكس_او"])
+@bot.command(name="xo")
 async def xo(ctx):
     view = XOView(ctx.author)
     view.add_buttons()
@@ -1679,7 +1694,7 @@ WOULD_YOU_RATHER = [
     "تلعب للمتعة أم للفوز بالمرتبة الأولى؟",
 ]
 
-@bot.command(name="لو_خيروك", aliases=["لوخيروك"])
+@bot.command(name="لو_خيروك")
 async def would_you_rather(ctx):
     q = random.choice(WOULD_YOU_RATHER)
     embed = discord.Embed(
@@ -1870,7 +1885,7 @@ async def rename(ctx, *, new_name: str):
         await ctx.send(bold_msg(f"فشل تغيير اسم الروم: {e}", "❌"))
 
 # FIX ALIAS: حذف, م
-@bot.command(name="حذف", aliases=["م"])
+@bot.command(name="حذف")
 async def delete_messages(ctx, amount: int):
     if not check_permissions(ctx):
         return
@@ -1882,7 +1897,7 @@ async def delete_messages(ctx, amount: int):
         await ctx.send(bold_msg(f"فشل حذف الرسائل: {e}", "❌"))
 
 # FIX ALIAS: برا
-@bot.command(name="برا", aliases=["برا"])
+@bot.command(name="برا")
 async def kick_user(ctx, member: discord.Member, *, reason: str = "لا يوجد سبب محدد"):
     if not check_permissions(ctx):
         return
@@ -1911,7 +1926,7 @@ async def jail_member(ctx, member: discord.Member, *, reason: str = "لا يوج
     except Exception as e:
         await ctx.send(bold_msg(f"حدث خطأ أثناء السجن: {e}", "❌"))
 
-@bot.command(name="افراج", aliases=["افراج"])
+@bot.command(name="افراج")
 async def unjail_member(ctx: commands.Context, member: discord.Member):
     if not check_permissions(ctx):
         await ctx.send(bold_msg("ليس لديك صلاحية الإفراج.", "🔒"))
@@ -1941,7 +1956,7 @@ async def unjail_member(ctx: commands.Context, member: discord.Member):
         await ctx.send(bold_msg(f"فشل الإفراج: {e}", "❌"))
 
 # FIX ALIAS: قفل
-@bot.command(name="قفل", aliases=["قفل"])
+@bot.command(name="قفل")
 async def lock_channel(ctx):
     if not check_permissions(ctx):
         return
@@ -1955,7 +1970,7 @@ async def lock_channel(ctx):
         await ctx.send(bold_msg(f"فشل قفل الروم: {e}", "❌"))
 
 # FIX ALIAS: فتح
-@bot.command(name="فتح", aliases=["فتح"])
+@bot.command(name="فتح")
 async def unlock_channel(ctx):
     if not check_permissions(ctx):
         return
