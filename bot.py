@@ -198,11 +198,14 @@ def member_has_role(member: discord.Member, role_id: int) -> bool:
 
 # ── Timeout choices ───────────────────────────────────────────────────────────
 TIMEOUT_OPTIONS = [
+    ("5m", "warn"),
+    ("10m", "spam"),
     ("15m", "spam"),
     ("30m", "تقديم إساءات لعضو أو إداري"),
     ("1h", "السب والقذف أو إرسال صور مخلة"),
     ("2h", "السب والقذف بالأهل أو مخالفة أي قانون"),
     ("1d", "في حال تكرار مخالفة القوانين"),
+    ("3d", "sending +18 or inappropriate contentt"),
     ("7d", "تايم مع سجن"),
     ("28d", "سجن"),
 ]
@@ -475,9 +478,9 @@ for _keys, _replies in _RAW_KEYWORD_REPLIES.items():
 def get_ticket_type_name_ar(ticket_type: str) -> str:
     """Get Arabic ticket type name"""
     types = {
-        "technical": "دعم فني",
-        "verification": "توثيق",
-        "complaint": "شكوى"
+        "technical": "〢🎫・الدعم・الفني",
+        "verification": "〢✅・توثيق",
+        "complaint": "〢🎟️・شكوى"
     }
     return types.get(ticket_type, ticket_type)
 
@@ -738,7 +741,7 @@ class TicketPanelView(discord.ui.View):
     @discord.ui.button(
         label="دعم فني",
         emoji="🟨",
-        style=discord.ButtonStyle.secondary,
+        style=discord.ButtonStyle.primary,
         custom_id="ticket:technical"
     )
     async def technical_support(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -969,7 +972,7 @@ class TicketControlView(discord.ui.View):
                 pass
     
     @discord.ui.button(
-        label="استلام (إدارة)",
+        label="استلام (اونر)",
         emoji="⚫",
         style=discord.ButtonStyle.secondary,
         custom_id="ticket:takeover"
