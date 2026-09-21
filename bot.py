@@ -10,6 +10,7 @@ import traceback
 import json
 import math
 import io
+import html
 import urllib.parse
 import urllib.request
 from threading import Thread
@@ -476,11 +477,21 @@ for _keys, _replies in _RAW_KEYWORD_REPLIES.items():
 # ==============================================================================
 
 def get_ticket_type_name_ar(ticket_type: str) -> str:
-    """Get Arabic ticket type name"""
+    """Get Arabic ticket type display name used in embeds/messages."""
     types = {
         "technical": "〢🎫・الدعم・الفني",
         "verification": "〢✅・توثيق",
         "complaint": "〢🎟️・شكوى"
+    }
+    return types.get(ticket_type, ticket_type)
+
+
+def get_ticket_channel_name_ar(ticket_type: str) -> str:
+    """Get the short Arabic name used for ticket channel names."""
+    types = {
+        "technical": "دعم فني",
+        "verification": "توثيق",
+        "complaint": "شكوى"
     }
     return types.get(ticket_type, ticket_type)
 
@@ -515,7 +526,7 @@ async def create_ticket_channel(guild: discord.Guild, ticket_type: str, creator:
         # Get ticket number
         number = await get_next_ticket_number(ticket_type)
         type_name_ar = get_ticket_type_name_ar(ticket_type)
-        channel_name = f"{type_name_ar}-{number}"
+        channel_name = f"{get_ticket_channel_name_ar(ticket_type)} #{number}"
         
         # Find or create tickets category
         category = discord.utils.get(guild.categories, name="التذاكر")
@@ -584,150 +595,129 @@ async def update_ticket_activity(channel_id: int):
         await save_tickets(tickets)
 
 async def generate_ticket_transcript(channel: discord.TextChannel, ticket_data: dict) -> str:
-    """Generate HTML transcript of ticket"""
+    """Generate a complete HTML transcript including ticket metadata and event history."""
     try:
         messages = []
-        async for msg in channel.history(limit=1000, oldest_first=True):
+        async for msg in channel.history(limit=None, oldest_first=True):
             messages.append(msg)
-        
-        html = f"""
+
+        def esc(value) -> str:
+            return html.escape(str(value if value is not None else ""))
+
+        events = ticket_data.get("events", [])
+        takeover_events = [e for e in events if e.get("type") == "takeover"]
+
+        if takeover_events:
+            takeover_summary = "<br>".join(
+                f"{esc(e.get('timestamp', 'N/A'))} — {esc(e.get('from_user_name') or 'لا يوجد مستلم سابق')} → {esc(e.get('user_name') or 'غير معروف')}"
+                for e in takeover_events
+            )
+        else:
+            takeover_summary = "لم يحدث استلام خاص من مستلم سابق."
+
+        event_labels = {
+            "created": "إنشاء التذكرة",
+            "claimed": "استلام التذكرة",
+            "takeover": "استلام خاص / Owner Takeover",
+            "user_added": "إضافة عضو",
+            "closed": "إغلاق التذكرة",
+            "reopened": "إعادة فتح التذكرة",
+            "deleted": "حذف التذكرة",
+            "claimer_left": "مغادرة مستلم التذكرة",
+            "auto_deleted": "حذف تلقائي بسبب عدم النشاط"
+        }
+
+        html_text = f"""
 <!DOCTYPE html>
 <html dir="rtl" lang="ar">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>نص تذكرة {channel.name}</title>
+    <title>Transcript {esc(channel.name)}</title>
     <style>
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #36393f;
-            color: #dcddde;
-            margin: 0;
-            padding: 20px;
-        }}
-        .container {{
-            max-width: 1200px;
-            margin: 0 auto;
-            background: #2f3136;
-            border-radius: 8px;
-            padding: 20px;
-        }}
-        .header {{
-            border-bottom: 2px solid #202225;
-            padding-bottom: 20px;
-            margin-bottom: 20px;
-        }}
-        .header h1 {{
-            margin: 0 0 10px 0;
-            color: #fff;
-        }}
-        .info {{
-            background: #202225;
-            padding: 15px;
-            border-radius: 5px;
-            margin-bottom: 20px;
-        }}
-        .info-row {{
-            margin: 5px 0;
-        }}
-        .label {{
-            font-weight: bold;
-            color: #b9bbbe;
-        }}
-        .message {{
-            margin: 15px 0;
-            padding: 10px;
-            background: #40444b;
-            border-radius: 5px;
-            border-right: 3px solid #5865f2;
-        }}
-        .message-header {{
-            display: flex;
-            align-items: center;
-            margin-bottom: 8px;
-        }}
-        .author {{
-            font-weight: bold;
-            color: #fff;
-            margin-left: 10px;
-        }}
-        .timestamp {{
-            color: #72767d;
-            font-size: 0.875rem;
-        }}
-        .content {{
-            color: #dcddde;
-            word-wrap: break-word;
-        }}
-        .system-message {{
-            background: #2f3136;
-            border-right-color: #faa61a;
-            font-style: italic;
-        }}
+        body {{ font-family: Segoe UI, Tahoma, sans-serif; background:#36393f; color:#dcddde; margin:0; padding:20px; }}
+        .container {{ max-width:1200px; margin:0 auto; background:#2f3136; border-radius:10px; padding:20px; }}
+        .header {{ border-bottom:2px solid #202225; padding-bottom:16px; margin-bottom:18px; }}
+        .header h1 {{ margin:0 0 8px; color:#fff; }}
+        .info {{ background:#202225; padding:15px; border-radius:8px; margin-bottom:18px; }}
+        .row {{ margin:7px 0; }}
+        .label {{ font-weight:700; color:#b9bbbe; }}
+        .section {{ margin-top:20px; }}
+        .section h2 {{ color:#fff; font-size:18px; }}
+        .event {{ background:#202225; padding:10px; border-radius:6px; margin:7px 0; }}
+        .message {{ margin:12px 0; padding:11px; background:#40444b; border-radius:6px; border-right:3px solid #ffb6d9; }}
+        .message-header {{ display:flex; gap:10px; align-items:center; margin-bottom:7px; flex-wrap:wrap; }}
+        .author {{ font-weight:700; color:#fff; }}
+        .meta {{ color:#72767d; font-size:0.85rem; }}
+        .content {{ color:#dcddde; white-space:pre-wrap; word-break:break-word; }}
+        a {{ color:#00aff4; }}
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <h1>📋 نص تذكرة: {channel.name}</h1>
-        </div>
-        
-        <div class="info">
-            <div class="info-row">
-                <span class="label">نوع التذكرة:</span> {get_ticket_type_name_ar(ticket_data.get('type', 'unknown'))}
-            </div>
-            <div class="info-row">
-                <span class="label">تم الفتح بواسطة:</span> {ticket_data.get('creator_name', 'Unknown')} (ID: {ticket_data.get('creator_id', 'N/A')})
-            </div>
-            <div class="info-row">
-                <span class="label">تاريخ الفتح:</span> {ticket_data.get('created_at', 'N/A')}
-            </div>
-            <div class="info-row">
-                <span class="label">تم الاستلام بواسطة:</span> {ticket_data.get('claimed_by_name', 'لم يتم الاستلام بعد')}
-            </div>
-            <div class="info-row">
-                <span class="label">تاريخ الاستلام:</span> {ticket_data.get('claimed_at', 'N/A')}
-            </div>
-            <div class="info-row">
-                <span class="label">الحالة:</span> {'مغلقة' if ticket_data.get('closed') else 'مفتوحة'}
-            </div>
-        </div>
-        
-        <div class="messages">
-"""
-        
-        for msg in messages:
-            author_name = msg.author.display_name
-            timestamp = msg.created_at.strftime("%Y-%m-%d %H:%M:%S")
-            content = msg.content or "[رسالة فارغة أو مرفق]"
-            
-            if msg.author.bot and msg.content.startswith("📋") or msg.content.startswith("👑") or msg.content.startswith("👤"):
-                msg_class = "message system-message"
-            else:
-                msg_class = "message"
-            
-            html += f"""
-            <div class="{msg_class}">
-                <div class="message-header">
-                    <span class="author">{author_name}</span>
-                    <span class="timestamp">{timestamp}</span>
-                </div>
-                <div class="content">{content}</div>
-            </div>
-"""
-        
-        html += """
-        </div>
+<div class="container">
+    <div class="header">
+        <h1>📋 نص تذكرة: {esc(channel.name)}</h1>
+        <div>{esc(ticket_data.get('guild_id', 'N/A'))}</div>
     </div>
+
+    <div class="info">
+        <div class="row"><span class="label">نوع التذكرة:</span> {esc(get_ticket_channel_name_ar(ticket_data.get('type', 'unknown')))}</div>
+        <div class="row"><span class="label">تم الفتح بواسطة:</span> {esc(ticket_data.get('creator_name', 'Unknown'))} (ID: {esc(ticket_data.get('creator_id', 'N/A'))})</div>
+        <div class="row"><span class="label">تاريخ الفتح:</span> {esc(ticket_data.get('created_at', 'N/A'))}</div>
+        <div class="row"><span class="label">مستلم التكت الحالي:</span> {esc(ticket_data.get('claimed_by_name') or 'لم يتم الاستلام حالياً')}</div>
+        <div class="row"><span class="label">وقت الاستلام الحالي:</span> {esc(ticket_data.get('claimed_at', 'N/A'))}</div>
+        <div class="row"><span class="label">هل حدث Owner Takeover؟</span> {takeover_summary}</div>
+        <div class="row"><span class="label">الإغلاق بواسطة:</span> {esc(ticket_data.get('closed_by_name') or 'N/A')} (ID: {esc(ticket_data.get('closed_by_id') or 'N/A')})</div>
+        <div class="row"><span class="label">وقت الإغلاق:</span> {esc(ticket_data.get('closed_at', 'N/A'))}</div>
+        <div class="row"><span class="label">سبب الإغلاق:</span> {esc(ticket_data.get('close_reason') or 'N/A')}</div>
+        <div class="row"><span class="label">سبب الحذف:</span> {esc(ticket_data.get('delete_reason') or 'حذف يدوي')}</div>
+    </div>
+
+    <div class="section">
+        <h2>🧾 سجل الأحداث</h2>
+        {''.join(f"<div class='event'><b>{esc(event_labels.get(e.get('type'), e.get('type', 'event')))}</b> — {esc(e.get('timestamp','N/A'))}<br>{esc(e.get('user_name',''))} {('→ ' + esc(e.get('from_user_name'))) if e.get('type') == 'takeover' and e.get('from_user_name') else ''}{(' — ' + esc(e.get('reason'))) if e.get('reason') else ''}{(' — تمت إضافة: ' + esc(e.get('added_user_name'))) if e.get('type') == 'user_added' and e.get('added_user_name') else ''}</div>" for e in events)}
+    </div>
+
+    <div class="section">
+        <h2>💬 الرسائل ({len(messages)})</h2>
+"""
+
+        for msg in messages:
+            author_display = esc(msg.author.display_name)
+            author_name = esc(msg.author.name)
+            author_id = esc(msg.author.id)
+            timestamp = esc(msg.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
+            content = esc(msg.content or "[رسالة بدون نص]")
+            attachments = ""
+            for attachment in msg.attachments:
+                url = esc(attachment.url)
+                filename = esc(attachment.filename)
+                attachments += f'<div>📎 <a href="{url}">{filename}</a></div>'
+
+            html_text += f"""
+        <div class="message">
+            <div class="message-header">
+                <span class="author">{author_display}</span>
+                <span class="meta">@{author_name}</span>
+                <span class="meta">ID: {author_id}</span>
+                <span class="meta">{timestamp}</span>
+            </div>
+            <div class="content">{content}</div>
+            {attachments}
+        </div>
+"""
+
+        html_text += """
+    </div>
+</div>
 </body>
 </html>
 """
-        
-        return html
-        
+        return html_text
+
     except Exception as e:
         print(f"Error generating transcript: {e}")
-        return f"<html><body><h1>Error generating transcript: {e}</h1></body></html>"
+        return f"<html><body><h1>Error generating transcript: {html.escape(str(e))}</h1></body></html>"
 
 # ==============================================================================
 # TICKET SYSTEM VIEWS (NEW)
@@ -872,10 +862,15 @@ class TicketPanelView(discord.ui.View):
                 pass
 
 class TicketControlView(discord.ui.View):
-    """Control buttons inside ticket channel"""
+    """Persistent control buttons inside every ticket channel."""
     def __init__(self):
         super().__init__(timeout=None)
-    
+
+    async def _get_ticket(self, interaction: discord.Interaction):
+        tickets = await load_tickets()
+        open_tickets = tickets.get("open_tickets", {})
+        return tickets, open_tickets, open_tickets.get(str(interaction.channel_id))
+
     @discord.ui.button(
         label="استلام",
         emoji="🟢",
@@ -883,94 +878,59 @@ class TicketControlView(discord.ui.View):
         custom_id="ticket:claim"
     )
     async def claim_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Normal staff claim"""
         try:
-            # Check permissions
             if not can_claim_ticket(interaction.user):
-                await interaction.response.send_message(
-                    bold_msg("ليس لديك صلاحية استلام التذاكر.", "🔒"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("ليس لديك صلاحية استلام التذاكر.", "🔒"), ephemeral=True)
                 return
-            
-            # Load ticket data
-            tickets = await load_tickets()
-            open_tickets = tickets.get("open_tickets", {})
-            ticket_data = open_tickets.get(str(interaction.channel_id))
-            
+
+            tickets, open_tickets, ticket_data = await self._get_ticket(interaction)
             if not ticket_data:
-                await interaction.response.send_message(
-                    bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"), ephemeral=True)
                 return
-            
-            # Check if already claimed
+
+            if ticket_data.get("closed"):
+                await interaction.response.send_message(bold_msg("هذه التذكرة مغلقة. أعد فتحها أولاً.", "🔒"), ephemeral=True)
+                return
+
             if ticket_data.get("claimed_by_id"):
-                await interaction.response.send_message(
-                    bold_msg("تم استلام التذكرة بالفعل.", "⚠️"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("تم استلام التذكرة بالفعل.", "⚠️"), ephemeral=True)
                 return
-            
-            # Claim ticket
+
+            now = datetime.datetime.now().isoformat()
             ticket_data["claimed_by_id"] = interaction.user.id
             ticket_data["claimed_by_name"] = interaction.user.display_name
-            ticket_data["claimed_at"] = datetime.datetime.now().isoformat()
-            ticket_data["events"].append({
+            ticket_data["claimed_at"] = now
+            ticket_data.setdefault("events", []).append({
                 "type": "claimed",
-                "timestamp": datetime.datetime.now().isoformat(),
+                "timestamp": now,
                 "user_id": interaction.user.id,
                 "user_name": interaction.user.display_name
             })
-            
+            ticket_data["last_activity"] = now
             open_tickets[str(interaction.channel_id)] = ticket_data
             tickets["open_tickets"] = open_tickets
             await save_tickets(tickets)
-            
-            # Update permissions - only creator, claimer, and administrators can send messages
+
             channel = interaction.channel
             guild = interaction.guild
-            
-            # Get ticket staff role
             ticket_staff_role = guild.get_role(TICKET_STAFF_ROLE_ID)
-            
-            # Remove send_messages from ticket staff role
             if ticket_staff_role:
-                await channel.set_permissions(
-                    ticket_staff_role,
-                    view_channel=True,
-                    send_messages=False,
-                    read_message_history=True
-                )
-            
-            # Give claimer send permission
-            await channel.set_permissions(
-                interaction.user,
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True
-            )
-            
-            # Update activity
-            await update_ticket_activity(interaction.channel_id)
-            
+                await channel.set_permissions(ticket_staff_role, view_channel=True, send_messages=False, read_message_history=True)
+
+            await channel.set_permissions(interaction.user, view_channel=True, send_messages=True, read_message_history=True)
+
             await interaction.response.send_message(
                 bold_msg(f"📋 تم استلام التذكرة بواسطة {interaction.user.mention}", ""),
                 allowed_mentions=discord.AllowedMentions(users=True)
             )
-            
         except Exception as e:
             print(f"Error claiming ticket: {e}")
             traceback.print_exc()
             try:
-                await interaction.response.send_message(
-                    bold_msg(f"حدث خطأ: {str(e)}", "❌"),
-                    ephemeral=True
-                )
-            except:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
                 pass
-    
+
     @discord.ui.button(
         label="استلام (اونر)",
         emoji="⚫",
@@ -978,102 +938,67 @@ class TicketControlView(discord.ui.View):
         custom_id="ticket:takeover"
     )
     async def takeover_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Authorized user takeover"""
         try:
-            # Check if user is authorized
             if not is_authorized_user(interaction.user):
-                await interaction.response.send_message(
-                    bold_msg("هذا الزر مخصص للإدارة المصرح لها فقط.", "🔒"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("هذا الزر مخصص للإدارة المصرح لها فقط.", "🔒"), ephemeral=True)
                 return
-            
-            # Load ticket data
-            tickets = await load_tickets()
-            open_tickets = tickets.get("open_tickets", {})
-            ticket_data = open_tickets.get(str(interaction.channel_id))
-            
+
+            tickets, open_tickets, ticket_data = await self._get_ticket(interaction)
             if not ticket_data:
-                await interaction.response.send_message(
-                    bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"), ephemeral=True)
                 return
-            
-            # Store previous claimer
+            if ticket_data.get("closed"):
+                await interaction.response.send_message(bold_msg("هذه التذكرة مغلقة. أعد فتحها أولاً.", "🔒"), ephemeral=True)
+                return
+
             previous_claimer_id = ticket_data.get("claimed_by_id")
-            previous_claimer_name = ticket_data.get("claimed_by_name", "لا أحد")
-            
-            # Takeover
+            previous_claimer_name = ticket_data.get("claimed_by_name") or "لا أحد"
+            now = datetime.datetime.now().isoformat()
+
             ticket_data["previous_claimer_id"] = previous_claimer_id
             ticket_data["previous_claimer_name"] = previous_claimer_name
             ticket_data["claimed_by_id"] = interaction.user.id
             ticket_data["claimed_by_name"] = interaction.user.display_name
-            ticket_data["claimed_at"] = datetime.datetime.now().isoformat()
-            ticket_data["events"].append({
+            ticket_data["claimed_at"] = now
+            ticket_data.setdefault("events", []).append({
                 "type": "takeover",
-                "timestamp": datetime.datetime.now().isoformat(),
+                "timestamp": now,
                 "user_id": interaction.user.id,
                 "user_name": interaction.user.display_name,
                 "from_user_id": previous_claimer_id,
                 "from_user_name": previous_claimer_name
             })
-            
+            ticket_data["last_activity"] = now
             open_tickets[str(interaction.channel_id)] = ticket_data
             tickets["open_tickets"] = open_tickets
             await save_tickets(tickets)
-            
-            # Update permissions
+
             channel = interaction.channel
             guild = interaction.guild
-            
-            # Remove previous claimer's send permission (if exists and not admin)
+
             if previous_claimer_id:
                 previous_member = guild.get_member(previous_claimer_id)
                 if previous_member and not previous_member.guild_permissions.administrator:
-                    await channel.set_permissions(
-                        previous_member,
-                        view_channel=True,
-                        send_messages=False,
-                        read_message_history=True
-                    )
-            
-            # Give new claimer send permission
-            await channel.set_permissions(
-                interaction.user,
-                view_channel=True,
-                send_messages=True,
-                read_message_history=True
-            )
-            
-            # Update activity
-            await update_ticket_activity(interaction.channel_id)
-            
+                    await channel.set_permissions(previous_member, view_channel=True, send_messages=False, read_message_history=True)
+
+            await channel.set_permissions(interaction.user, view_channel=True, send_messages=True, read_message_history=True)
+
             if previous_claimer_id:
-                await interaction.response.send_message(
-                    bold_msg(
-                        f"👑 قام {interaction.user.mention} باستلام التذكرة من <@{previous_claimer_id}>",
-                        ""
-                    ),
-                    allowed_mentions=discord.AllowedMentions(users=True)
-                )
+                text = f"👑 قام {interaction.user.mention} باستلام التذكرة من <@{previous_claimer_id}>"
             else:
-                await interaction.response.send_message(
-                    bold_msg(f"👑 قام {interaction.user.mention} باستلام التذكرة", ""),
-                    allowed_mentions=discord.AllowedMentions(users=True)
-                )
-            
+                text = f"👑 قام {interaction.user.mention} باستلام التذكرة"
+            await interaction.response.send_message(
+                bold_msg(text, ""),
+                allowed_mentions=discord.AllowedMentions(users=True)
+            )
         except Exception as e:
             print(f"Error taking over ticket: {e}")
             traceback.print_exc()
             try:
-                await interaction.response.send_message(
-                    bold_msg(f"حدث خطأ: {str(e)}", "❌"),
-                    ephemeral=True
-                )
-            except:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
                 pass
-    
+
     @discord.ui.button(
         label="قفل التكت",
         emoji="🔒",
@@ -1081,67 +1006,37 @@ class TicketControlView(discord.ui.View):
         custom_id="ticket:close"
     )
     async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Close ticket"""
         try:
-            # Load ticket data
-            tickets = await load_tickets()
-            open_tickets = tickets.get("open_tickets", {})
-            ticket_data = open_tickets.get(str(interaction.channel_id))
-            
+            _, _, ticket_data = await self._get_ticket(interaction)
             if not ticket_data:
-                await interaction.response.send_message(
-                    bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"), ephemeral=True)
                 return
-            
-            # Check permissions
+
+            if ticket_data.get("closed"):
+                await interaction.response.send_message(bold_msg("التذكرة مغلقة بالفعل.", "⚠️"), ephemeral=True)
+                return
+
             if not can_close_ticket(interaction.user, ticket_data):
-                await interaction.response.send_message(
-                    bold_msg("ليس لديك صلاحية إغلاق هذه التذكرة.", "🔒"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("ليس لديك صلاحية إغلاق هذه التذكرة.", "🔒"), ephemeral=True)
                 return
-            
-            # Mark as closed
-            ticket_data["closed"] = True
-            ticket_data["closed_by_id"] = interaction.user.id
-            ticket_data["closed_by_name"] = interaction.user.display_name
-            ticket_data["closed_at"] = datetime.datetime.now().isoformat()
-            ticket_data["events"].append({
-                "type": "closed",
-                "timestamp": datetime.datetime.now().isoformat(),
-                "user_id": interaction.user.id,
-                "user_name": interaction.user.display_name
-            })
-            
-            open_tickets[str(interaction.channel_id)] = ticket_data
-            tickets["open_tickets"] = open_tickets
-            await save_tickets(tickets)
-            
-            # Show confirmation
-            embed = discord.Embed(
-                title="🔒 إغلاق التذكرة",
-                description="هل أنت متأكد من قفل التذكرة؟",
-                color=pink_color()
-            )
-            
+
             await interaction.response.send_message(
-                embed=embed,
-                view=TicketCloseConfirmView()
+                embed=discord.Embed(
+                    title="🔒 سبب إغلاق التذكرة",
+                    description="اختر سبب قفل التذكرة من القائمة التالية.",
+                    color=pink_color()
+                ),
+                view=TicketCloseReasonView(interaction.user.id),
+                ephemeral=True
             )
-            
         except Exception as e:
-            print(f"Error closing ticket: {e}")
+            print(f"Error opening close reason selector: {e}")
             traceback.print_exc()
             try:
-                await interaction.response.send_message(
-                    bold_msg(f"حدث خطأ: {str(e)}", "❌"),
-                    ephemeral=True
-                )
-            except:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
                 pass
-    
+
     @discord.ui.button(
         label="إضافة شخص",
         emoji="👤",
@@ -1149,324 +1044,436 @@ class TicketControlView(discord.ui.View):
         custom_id="ticket:add_user"
     )
     async def add_user(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Add user to ticket"""
         try:
-            # Load ticket data
-            tickets = await load_tickets()
-            open_tickets = tickets.get("open_tickets", {})
-            ticket_data = open_tickets.get(str(interaction.channel_id))
-            
+            _, _, ticket_data = await self._get_ticket(interaction)
             if not ticket_data:
-                await interaction.response.send_message(
-                    bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"), ephemeral=True)
                 return
-            
-            # Check if user is ticket creator
+            if ticket_data.get("closed"):
+                await interaction.response.send_message(bold_msg("لا يمكنك إضافة شخص إلى تذكرة مغلقة.", "🔒"), ephemeral=True)
+                return
             if interaction.user.id != ticket_data.get("creator_id"):
-                await interaction.response.send_message(
-                    bold_msg("فقط منشئ التذكرة يمكنه إضافة أشخاص.", "🔒"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("فقط منشئ التذكرة يمكنه إضافة أشخاص.", "🔒"), ephemeral=True)
                 return
-            
-            # Check limit
+
             added_users = ticket_data.get("added_users", [])
             if len(added_users) >= 2:
-                await interaction.response.send_message(
-                    bold_msg("تم الوصول للحد الأقصى (شخصين).", "⚠️"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("تم الوصول للحد الأقصى: شخصان فقط.", "⚠️"), ephemeral=True)
                 return
-            
-            # Show modal to get user
-            await interaction.response.send_modal(AddUserModal(ticket_data))
-            
+
+            await interaction.response.send_message(
+                embed=discord.Embed(
+                    title="👤 إضافة شخص للتذكرة",
+                    description="اختر العضو من القائمة. يمكنك إضافة شخصين كحد أقصى.",
+                    color=pink_color()
+                ),
+                view=AddUserSelectView(interaction.channel_id, interaction.user.id),
+                ephemeral=True
+            )
         except Exception as e:
-            print(f"Error adding user: {e}")
+            print(f"Error opening add-user selector: {e}")
             traceback.print_exc()
             try:
-                await interaction.response.send_message(
-                    bold_msg(f"حدث خطأ: {str(e)}", "❌"),
-                    ephemeral=True
-                )
-            except:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
                 pass
 
-class AddUserModal(discord.ui.Modal, title="إضافة شخص للتذكرة"):
-    """Modal to add user to ticket"""
-    
-    user_id = discord.ui.TextInput(
-        label="ID العضو",
-        placeholder="أدخل ID العضو الذي تريد إضافته",
-        required=True,
-        max_length=20
-    )
-    
-    def __init__(self, ticket_data):
-        super().__init__()
-        self.ticket_data = ticket_data
-    
-    async def on_submit(self, interaction: discord.Interaction):
+
+class AddUserSelectView(discord.ui.View):
+    """Ephemeral Discord User Select for adding people to a ticket."""
+    def __init__(self, channel_id: int, creator_id: int):
+        super().__init__(timeout=60)
+        self.channel_id = channel_id
+        self.creator_id = creator_id
+        self.user_select = discord.ui.UserSelect(
+            placeholder="اختر العضو الذي تريد إضافته",
+            min_values=1,
+            max_values=1,
+            custom_id=f"ticket:add-user-select:{channel_id}"
+        )
+        self.user_select.callback = self.on_user_selected
+        self.add_item(self.user_select)
+
+    async def on_user_selected(self, interaction: discord.Interaction):
         try:
-            # Get user
-            try:
-                user_id = int(self.user_id.value.strip())
-                member = interaction.guild.get_member(user_id)
-                
-                if not member:
-                    await interaction.response.send_message(
-                        bold_msg("لم يتم العثور على العضو.", "❌"),
-                        ephemeral=True
-                    )
-                    return
-            except ValueError:
-                await interaction.response.send_message(
-                    bold_msg("ID غير صحيح.", "❌"),
-                    ephemeral=True
-                )
+            if interaction.user.id != self.creator_id:
+                await interaction.response.send_message(bold_msg("فقط منشئ التذكرة يمكنه استخدام هذه القائمة.", "🔒"), ephemeral=True)
                 return
-            
-            # Check if already added
-            added_users = self.ticket_data.get("added_users", [])
-            if user_id in added_users:
-                await interaction.response.send_message(
-                    bold_msg("هذا العضو مضاف بالفعل.", "⚠️"),
-                    ephemeral=True
-                )
+
+            selected = self.user_select.values[0]
+            member = interaction.guild.get_member(selected.id)
+            if not member:
+                try:
+                    member = await interaction.guild.fetch_member(selected.id)
+                except Exception:
+                    member = None
+
+            if not member:
+                await interaction.response.send_message(bold_msg("لم يتم العثور على العضو داخل السيرفر.", "❌"), ephemeral=True)
                 return
-            
-            # Add permissions
+            if member.bot:
+                await interaction.response.send_message(bold_msg("لا يمكن إضافة بوت إلى التذكرة.", "❌"), ephemeral=True)
+                return
+            if member.id == interaction.user.id:
+                await interaction.response.send_message(bold_msg("أنت منشئ التذكرة بالفعل.", "⚠️"), ephemeral=True)
+                return
+
+            tickets = await load_tickets()
+            open_tickets = tickets.get("open_tickets", {})
+            ticket_data = open_tickets.get(str(self.channel_id))
+            if not ticket_data:
+                await interaction.response.send_message(bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"), ephemeral=True)
+                return
+            if ticket_data.get("closed"):
+                await interaction.response.send_message(bold_msg("التذكرة مغلقة.", "🔒"), ephemeral=True)
+                return
+
+            added_users = ticket_data.get("added_users", [])
+            if len(added_users) >= 2:
+                await interaction.response.send_message(bold_msg("تم الوصول للحد الأقصى: شخصان فقط.", "⚠️"), ephemeral=True)
+                return
+            if member.id in added_users:
+                await interaction.response.send_message(bold_msg("هذا العضو مضاف بالفعل.", "⚠️"), ephemeral=True)
+                return
+
             channel = interaction.channel
             await channel.set_permissions(
                 member,
                 view_channel=True,
                 send_messages=True,
-                read_message_history=True
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
             )
-            
-            # Update ticket data
-            added_users.append(user_id)
-            self.ticket_data["added_users"] = added_users
-            self.ticket_data["events"].append({
+
+            now = datetime.datetime.now().isoformat()
+            added_users.append(member.id)
+            ticket_data["added_users"] = added_users
+            ticket_data.setdefault("events", []).append({
                 "type": "user_added",
-                "timestamp": datetime.datetime.now().isoformat(),
+                "timestamp": now,
                 "added_by_id": interaction.user.id,
                 "added_by_name": interaction.user.display_name,
-                "added_user_id": user_id,
+                "added_user_id": member.id,
                 "added_user_name": member.display_name
             })
-            
-            # Save
-            tickets = await load_tickets()
-            open_tickets = tickets.get("open_tickets", {})
-            open_tickets[str(interaction.channel_id)] = self.ticket_data
+            ticket_data["last_activity"] = now
+            open_tickets[str(self.channel_id)] = ticket_data
             tickets["open_tickets"] = open_tickets
             await save_tickets(tickets)
-            
-            # Update activity
-            await update_ticket_activity(interaction.channel_id)
-            
-            await interaction.response.send_message(
-                bold_msg(f"👤 تمت إضافة {member.mention} للتذكرة بنجاح.", ""),
+
+            await interaction.response.edit_message(
+                content=bold_msg(f"👤 تمت إضافة {member.mention} للتذكرة بنجاح.", "✅"),
+                embed=None,
+                view=None,
                 allowed_mentions=discord.AllowedMentions(users=True)
             )
-            
+            self.stop()
         except Exception as e:
-            print(f"Error in add user modal: {e}")
+            print(f"Error in add-user selector: {e}")
             traceback.print_exc()
             try:
-                await interaction.response.send_message(
-                    bold_msg(f"حدث خطأ: {str(e)}", "❌"),
-                    ephemeral=True
-                )
-            except:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
                 pass
 
-class TicketCloseConfirmView(discord.ui.View):
-    """Confirmation view for ticket closure"""
-    def __init__(self):
-        super().__init__(timeout=60)
-        self.delete_cancelled = False
-    
-    @discord.ui.button(
-        label="فتح",
-        emoji="🟢",
-        style=discord.ButtonStyle.success
-    )
-    async def reopen(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Reopen ticket"""
-        try:
-            # Load ticket data
-            tickets = await load_tickets()
-            open_tickets = tickets.get("open_tickets", {})
-            ticket_data = open_tickets.get(str(interaction.channel_id))
-            
-            if not ticket_data:
-                await interaction.response.send_message(
-                    bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
-                    ephemeral=True
+
+class TicketCloseReasonView(discord.ui.View):
+    """Close reason selection shown before the final close confirmation."""
+    def __init__(self, initiator_id: int):
+        super().__init__(timeout=120)
+        self.initiator_id = initiator_id
+        self.reason_select = discord.ui.Select(
+            placeholder="اختر سبب قفل التذكرة",
+            min_values=1,
+            max_values=1,
+            options=[
+                discord.SelectOption(
+                    label="تم الانتهاء من التكت",
+                    value="تم الانتهاء من التكت",
+                    description="تم التعامل مع المشكلة وإنهاء الطلب."
+                ),
+                discord.SelectOption(
+                    label="لم يتم الوصول إلى حل مرضي",
+                    value="لم يتم الوصول إلى حل مرضي",
+                    description="لم يتم الوصول إلى حل مرضي للمشكلة."
+                ),
+                discord.SelectOption(
+                    label="أخرى",
+                    value="أخرى",
+                    description="اكتب سبباً مخصصاً لإغلاق التذكرة."
                 )
+            ]
+        )
+        self.reason_select.callback = self.on_reason_selected
+        self.add_item(self.reason_select)
+
+    async def on_reason_selected(self, interaction: discord.Interaction):
+        try:
+            if interaction.user.id != self.initiator_id:
+                await interaction.response.send_message(bold_msg("فقط الشخص الذي بدأ عملية الإغلاق يمكنه اختيار السبب.", "🔒"), ephemeral=True)
                 return
-            
-            # Reopen
+
+            reason = self.reason_select.values[0]
+            if reason == "أخرى":
+                await interaction.response.send_modal(TicketOtherCloseReasonModal(self.initiator_id))
+            else:
+                await prepare_ticket_close_confirmation(interaction, self.initiator_id, reason)
+                self.stop()
+        except Exception as e:
+            print(f"Error selecting close reason: {e}")
+            traceback.print_exc()
+            try:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
+                pass
+
+
+class TicketOtherCloseReasonModal(discord.ui.Modal, title="سبب إغلاق مخصص"):
+    reason = discord.ui.TextInput(
+        label="سبب الإغلاق",
+        placeholder="اكتب سبب قفل التكت...",
+        required=True,
+        min_length=2,
+        max_length=500,
+        style=discord.TextStyle.paragraph
+    )
+
+    def __init__(self, initiator_id: int):
+        super().__init__()
+        self.initiator_id = initiator_id
+
+    async def on_submit(self, interaction: discord.Interaction):
+        try:
+            await prepare_ticket_close_confirmation(interaction, self.initiator_id, self.reason.value.strip())
+        except Exception as e:
+            print(f"Error submitting custom close reason: {e}")
+            traceback.print_exc()
+            try:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
+                pass
+
+
+async def prepare_ticket_close_confirmation(interaction: discord.Interaction, initiator_id: int, reason: str):
+    tickets = await load_tickets()
+    open_tickets = tickets.get("open_tickets", {})
+    ticket_data = open_tickets.get(str(interaction.channel_id))
+    if not ticket_data:
+        await interaction.response.send_message(bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"), ephemeral=True)
+        return
+    if not can_close_ticket(interaction.user, ticket_data) or interaction.user.id != initiator_id:
+        await interaction.response.send_message(bold_msg("ليس لديك صلاحية إغلاق هذه التذكرة.", "🔒"), ephemeral=True)
+        return
+
+    now = datetime.datetime.now().isoformat()
+    # Store a pending close only. The ticket becomes officially closed after the user
+    # confirms with the final button, so an expired/abandoned selector does not lock it.
+    ticket_data["pending_close_reason"] = reason
+    ticket_data["pending_close_by_id"] = interaction.user.id
+    ticket_data["pending_close_by_name"] = interaction.user.display_name
+    ticket_data["pending_close_at"] = now
+    ticket_data["pending_close_initiator_id"] = initiator_id
+    ticket_data["last_activity"] = now
+    open_tickets[str(interaction.channel_id)] = ticket_data
+    tickets["open_tickets"] = open_tickets
+    await save_tickets(tickets)
+
+    embed = discord.Embed(
+        title="🔒 إغلاق التذكرة",
+        description=f"هل أنت متأكد من قفل التذكرة؟\n\n**السبب:** {reason}",
+        color=pink_color()
+    )
+    if isinstance(interaction.message, discord.Message):
+        await interaction.response.edit_message(
+            embed=embed,
+            content=None,
+            view=TicketCloseConfirmView(initiator_id)
+        )
+    else:
+        await interaction.response.send_message(
+            embed=embed,
+            view=TicketCloseConfirmView(initiator_id),
+            ephemeral=True
+        )
+
+
+class TicketCloseConfirmView(discord.ui.View):
+    """Final close confirmation. No cancel-delete button."""
+    def __init__(self, initiator_id: int):
+        super().__init__(timeout=120)
+        self.initiator_id = initiator_id
+
+    async def _load_ticket_for_action(self, interaction: discord.Interaction):
+        tickets = await load_tickets()
+        open_tickets = tickets.get("open_tickets", {})
+        ticket_data = open_tickets.get(str(interaction.channel_id))
+        return tickets, open_tickets, ticket_data
+
+    @discord.ui.button(label="فتح", emoji="🟢", style=discord.ButtonStyle.success)
+    async def reopen(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            tickets, open_tickets, ticket_data = await self._load_ticket_for_action(interaction)
+            if not ticket_data:
+                await interaction.response.send_message(bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"), ephemeral=True)
+                return
+            if interaction.user.id != self.initiator_id and not can_close_ticket(interaction.user, ticket_data):
+                await interaction.response.send_message(bold_msg("ليس لديك صلاحية إعادة فتح هذه التذكرة.", "🔒"), ephemeral=True)
+                return
+
+            now = datetime.datetime.now().isoformat()
+            was_closed = bool(ticket_data.get("closed"))
             ticket_data["closed"] = False
-            ticket_data["events"].append({
-                "type": "reopened",
-                "timestamp": datetime.datetime.now().isoformat(),
-                "user_id": interaction.user.id,
-                "user_name": interaction.user.display_name
-            })
-            
+            if was_closed:
+                ticket_data["close_reopened_at"] = now
+                ticket_data.setdefault("events", []).append({
+                    "type": "reopened",
+                    "timestamp": now,
+                    "user_id": interaction.user.id,
+                    "user_name": interaction.user.display_name
+                })
+            ticket_data.pop("pending_close_reason", None)
+            ticket_data.pop("pending_close_by_id", None)
+            ticket_data.pop("pending_close_by_name", None)
+            ticket_data.pop("pending_close_at", None)
+            ticket_data.pop("pending_close_initiator_id", None)
+            ticket_data["last_activity"] = now
             open_tickets[str(interaction.channel_id)] = ticket_data
             tickets["open_tickets"] = open_tickets
             await save_tickets(tickets)
-            
-            # Update activity
-            await update_ticket_activity(interaction.channel_id)
-            
-            # Restore permissions if needed
+
             channel = interaction.channel
             guild = interaction.guild
-            
-            # Re-enable ticket staff send messages
             ticket_staff_role = guild.get_role(TICKET_STAFF_ROLE_ID)
             if ticket_staff_role and not ticket_data.get("claimed_by_id"):
-                await channel.set_permissions(
-                    ticket_staff_role,
-                    view_channel=True,
-                    send_messages=True,
-                    read_message_history=True
-                )
-            
+                await channel.set_permissions(ticket_staff_role, view_channel=True, send_messages=True, read_message_history=True)
+
             await interaction.response.edit_message(
-                content=bold_msg("تم إعادة فتح التذكرة بنجاح.", "🟢"),
+                content=bold_msg("تم إلغاء الإغلاق وإبقاء التذكرة مفتوحة.", "🟢") if not was_closed else bold_msg("تم إعادة فتح التذكرة بنجاح.", "🟢"),
                 embed=None,
                 view=None
             )
-            
+            self.stop()
         except Exception as e:
             print(f"Error reopening ticket: {e}")
             traceback.print_exc()
             try:
-                await interaction.response.send_message(
-                    bold_msg(f"حدث خطأ: {str(e)}", "❌"),
-                    ephemeral=True
-                )
-            except:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
                 pass
-    
-    @discord.ui.button(
-        label="حذف",
-        emoji="🔴",
-        style=discord.ButtonStyle.danger
-    )
+
+    @discord.ui.button(label="حذف", emoji="🔴", style=discord.ButtonStyle.danger)
     async def delete(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Delete ticket after countdown"""
         try:
-            # Generate transcript first
-            tickets = await load_tickets()
-            open_tickets = tickets.get("open_tickets", {})
-            ticket_data = open_tickets.get(str(interaction.channel_id))
-            
+            tickets, open_tickets, ticket_data = await self._load_ticket_for_action(interaction)
             if not ticket_data:
-                await interaction.response.send_message(
-                    bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
-                    ephemeral=True
-                )
+                await interaction.response.send_message(bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"), ephemeral=True)
                 return
-            
+            if interaction.user.id != self.initiator_id and not can_close_ticket(interaction.user, ticket_data):
+                await interaction.response.send_message(bold_msg("ليس لديك صلاحية حذف هذه التذكرة.", "🔒"), ephemeral=True)
+                return
+
+            now = datetime.datetime.now().isoformat()
+            close_reason = ticket_data.get("pending_close_reason") or ticket_data.get("close_reason") or "غير محدد"
+            close_by_id = ticket_data.get("pending_close_by_id") or ticket_data.get("closed_by_id") or interaction.user.id
+            close_by_name = ticket_data.get("pending_close_by_name") or ticket_data.get("closed_by_name") or interaction.user.display_name
+
+            ticket_data["closed"] = True
+            ticket_data["closed_by_id"] = close_by_id
+            ticket_data["closed_by_name"] = close_by_name
+            ticket_data["closed_at"] = now
+            ticket_data["close_reason"] = close_reason
+            ticket_data["delete_reason"] = "حذف يدوي"
+            ticket_data.setdefault("events", []).append({
+                "type": "closed",
+                "timestamp": now,
+                "user_id": close_by_id,
+                "user_name": close_by_name,
+                "reason": close_reason
+            })
+            ticket_data.setdefault("events", []).append({
+                "type": "deleted",
+                "timestamp": now,
+                "user_id": interaction.user.id,
+                "user_name": interaction.user.display_name,
+                "reason": "حذف يدوي"
+            })
+            for key in ("pending_close_reason", "pending_close_by_id", "pending_close_by_name", "pending_close_at", "pending_close_initiator_id"):
+                ticket_data.pop(key, None)
+            ticket_data["last_activity"] = now
+            open_tickets[str(interaction.channel_id)] = ticket_data
+            tickets["open_tickets"] = open_tickets
+            await save_tickets(tickets)
+
             channel = interaction.channel
-            
-            # Generate transcript
             transcript_html = await generate_ticket_transcript(channel, ticket_data)
-            
-            # Get transcript channel
+
             config = await load_ticket_config()
             transcript_channel_id = config.get("transcript_channel_id")
-            
             if transcript_channel_id:
                 transcript_channel = interaction.guild.get_channel(transcript_channel_id)
                 if transcript_channel:
-                    # Create transcript file
                     transcript_file = discord.File(
-                        io.BytesIO(transcript_html.encode('utf-8')),
-                        filename=f"transcript-{channel.name}.html"
+                        io.BytesIO(transcript_html.encode("utf-8")),
+                        filename=f"transcript-{channel.id}.html"
                     )
-                    
-                    # Create log embed
+                    takeover_events = [e for e in ticket_data.get("events", []) if e.get("type") == "takeover"]
+                    takeover_text = "نعم" if takeover_events else "لا"
                     log_embed = discord.Embed(
                         title="🎫 سجل التذكرة",
                         color=pink_color(),
                         timestamp=datetime.datetime.now(datetime.timezone.utc)
                     )
-                    log_embed.add_field(name="النوع", value=get_ticket_type_name_ar(ticket_data.get('type', 'unknown')), inline=True)
+                    log_embed.add_field(name="النوع", value=get_ticket_channel_name_ar(ticket_data.get("type", "unknown")), inline=True)
                     log_embed.add_field(name="التذكرة", value=channel.name, inline=True)
-                    log_embed.add_field(name="تم الفتح بواسطة", value=f"<@{ticket_data.get('creator_id')}>", inline=True)
-                    log_embed.add_field(name="تاريخ الفتح", value=ticket_data.get('created_at', 'N/A'), inline=True)
-                    log_embed.add_field(name="تم الاستلام بواسطة", value=ticket_data.get('claimed_by_name', 'لم يتم الاستلام'), inline=True)
-                    log_embed.add_field(name="تم الإغلاق بواسطة", value=f"<@{ticket_data.get('closed_by_id', interaction.user.id)}>", inline=True)
+                    log_embed.add_field(name="منشئ التكت", value=f"<@{ticket_data.get('creator_id')}>", inline=True)
+                    log_embed.add_field(name="مستلم التكت", value=ticket_data.get("claimed_by_name") or "لم يتم الاستلام", inline=True)
+                    log_embed.add_field(name="وقت الاستلام", value=ticket_data.get("claimed_at", "N/A"), inline=True)
+                    log_embed.add_field(name="Owner Takeover", value=takeover_text, inline=True)
+                    log_embed.add_field(name="الإغلاق بواسطة", value=ticket_data.get("closed_by_name") or "N/A", inline=True)
+                    log_embed.add_field(name="وقت الإغلاق", value=ticket_data.get("closed_at", "N/A"), inline=True)
+                    log_embed.add_field(name="سبب الإغلاق", value=ticket_data.get("close_reason") or "N/A", inline=False)
                     log_embed.add_field(name="سبب الحذف", value="حذف يدوي", inline=False)
-                    
+                    if takeover_events:
+                        last_takeover = takeover_events[-1]
+                        log_embed.add_field(
+                            name="من المستلم إلى مستلم Owner",
+                            value=f"{last_takeover.get('from_user_name') or 'لا أحد'} → {last_takeover.get('user_name') or 'غير معروف'}\n{last_takeover.get('timestamp', 'N/A')}",
+                            inline=False
+                        )
+                    else:
+                        log_embed.add_field(name="استلام Owner", value="لم يحدث أي Takeover.", inline=False)
                     try:
                         await transcript_channel.send(embed=log_embed, file=transcript_file)
                     except Exception as e:
                         print(f"Error sending transcript: {e}")
-            
-            # Remove from open tickets
-            if str(interaction.channel_id) in open_tickets:
-                del open_tickets[str(interaction.channel_id)]
+
+            await interaction.response.edit_message(
+                content=bold_msg("🗑️ سيتم حذف التذكرة خلال 10 ثوانٍ.", ""),
+                embed=None,
+                view=None
+            )
+
+            await asyncio.sleep(10)
+            try:
+                await channel.delete(reason=f"تم حذف التذكرة بواسطة {interaction.user.name}")
+            except Exception:
+                pass
+
+            tickets = await load_tickets()
+            open_tickets = tickets.get("open_tickets", {})
+            if str(channel.id) in open_tickets:
+                del open_tickets[str(channel.id)]
                 tickets["open_tickets"] = open_tickets
                 await save_tickets(tickets)
-            
-            # Start countdown with cancel option
-            countdown_view = CancelDeleteView(self)
-            await interaction.response.edit_message(
-                content=bold_msg("🗑️ سيتم حذف التذكرة خلال 10 ثوانٍ. اضغط إلغاء لإيقاف الحذف.", ""),
-                embed=None,
-                view=countdown_view
-            )
-            
-            # Wait 10 seconds
-            await asyncio.sleep(10)
-            
-            # Check if cancelled
-            if not self.delete_cancelled:
-                try:
-                    await channel.delete(reason=f"تم حذف التذكرة بواسطة {interaction.user.name}")
-                except:
-                    pass
-            
+            self.stop()
         except Exception as e:
             print(f"Error deleting ticket: {e}")
             traceback.print_exc()
             try:
-                await interaction.response.send_message(
-                    bold_msg(f"حدث خطأ: {str(e)}", "❌"),
-                    ephemeral=True
-                )
-            except:
+                await interaction.response.send_message(bold_msg(f"حدث خطأ: {e}", "❌"), ephemeral=True)
+            except Exception:
                 pass
-
-class CancelDeleteView(discord.ui.View):
-    """View to cancel ticket deletion"""
-    def __init__(self, parent_view):
-        super().__init__(timeout=10)
-        self.parent_view = parent_view
-    
-    @discord.ui.button(
-        label="إلغاء الحذف",
-        emoji="❌",
-        style=discord.ButtonStyle.secondary
-    )
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.parent_view.delete_cancelled = True
-        await interaction.response.edit_message(
-            content=bold_msg("تم إلغاء حذف التذكرة.", "✅"),
-            view=None
-        )
-        self.stop()
 
 # ==============================================================================
 # TICKET INACTIVITY CHECKER (NEW)
@@ -1511,6 +1518,17 @@ async def check_inactive_tickets():
                         del open_tickets[str(channel_id)]
                     continue
                 
+                # Record the automatic deletion event before generating the transcript.
+                now_iso = datetime.datetime.now().isoformat()
+                ticket_data["delete_reason"] = "15 ساعة بدون نشاط"
+                ticket_data.setdefault("events", []).append({
+                    "type": "auto_deleted",
+                    "timestamp": now_iso,
+                    "user_id": bot.user.id if bot.user else None,
+                    "user_name": str(bot.user) if bot.user else "BOT",
+                    "reason": "15 ساعة بدون نشاط"
+                })
+
                 # Generate transcript
                 transcript_html = await generate_ticket_transcript(channel, ticket_data)
                 
@@ -1537,8 +1555,13 @@ async def check_inactive_tickets():
                         log_embed.add_field(name="التذكرة", value=channel.name, inline=True)
                         log_embed.add_field(name="تم الفتح بواسطة", value=f"<@{ticket_data.get('creator_id')}>", inline=True)
                         log_embed.add_field(name="تاريخ الفتح", value=ticket_data.get('created_at', 'N/A'), inline=True)
-                        log_embed.add_field(name="تم الاستلام بواسطة", value=ticket_data.get('claimed_by_name', 'لم يتم الاستلام'), inline=True)
+                        log_embed.add_field(name="مستلم التكت", value=ticket_data.get('claimed_by_name') or 'لم يتم الاستلام', inline=True)
+                        takeover_events = [e for e in ticket_data.get("events", []) if e.get("type") == "takeover"]
+                        log_embed.add_field(name="Owner Takeover", value="نعم" if takeover_events else "لا", inline=True)
                         log_embed.add_field(name="سبب الحذف", value="15 ساعة بدون نشاط", inline=False)
+                        if takeover_events:
+                            e = takeover_events[-1]
+                            log_embed.add_field(name="تفاصيل Owner Takeover", value=f"{e.get('from_user_name') or 'لا أحد'} → {e.get('user_name') or 'غير معروف'}\n{e.get('timestamp', 'N/A')}", inline=False)
                         
                         try:
                             await transcript_channel.send(embed=log_embed, file=transcript_file)
@@ -1582,10 +1605,6 @@ async def set_ticket_channel(interaction: discord.Interaction, channel: discord.
     try:
         # Save config
         config = await load_ticket_config()
-        config["panel_channel_id"] = channel.id
-        config["guild_id"] = interaction.guild_id
-        await save_ticket_config(config)
-        
         # Create panel embed
         embed = discord.Embed(
             title="🎫 نظام التذاكر",
@@ -1610,11 +1629,27 @@ async def set_ticket_channel(interaction: discord.Interaction, channel: discord.
         embed.set_image(url=TOUCHLINE_IMAGE_URL)
         embed.set_footer(text="اضغط على الزر المناسب لفتح تذكرة")
         
-        # Send panel
-        await channel.send(embed=embed, view=TicketPanelView())
-        
+        # Update the existing configured panel when possible; otherwise send a new one.
+        panel_message_id = config.get("panel_message_id")
+        panel_message = None
+        if panel_message_id and config.get("panel_channel_id") == channel.id:
+            try:
+                panel_message = await channel.fetch_message(int(panel_message_id))
+            except Exception:
+                panel_message = None
+
+        if panel_message:
+            await panel_message.edit(embed=embed, view=TicketPanelView())
+        else:
+            panel_message = await channel.send(embed=embed, view=TicketPanelView())
+
+        config["panel_channel_id"] = channel.id
+        config["panel_message_id"] = panel_message.id
+        config["guild_id"] = interaction.guild_id
+        await save_ticket_config(config)
+
         await interaction.response.send_message(
-            bold_msg(f"تم تعيين {channel.mention} كقناة لوحة التذاكر وإرسال اللوحة بنجاح.", "✅"),
+            bold_msg(f"تم تعيين {channel.mention} كقناة لوحة التذاكر وتحديث اللوحة بنجاح.", "✅"),
             ephemeral=True
         )
         
@@ -1676,6 +1711,48 @@ async def on_ready():
     if not check_inactive_tickets.is_running():
         check_inactive_tickets.start()
         print("✅ Ticket inactivity checker started.")
+
+@bot.event
+async def on_member_remove(member: discord.Member):
+    """If a ticket claimer leaves, unclaim the ticket so staff can claim it again."""
+    try:
+        tickets = await load_tickets()
+        open_tickets = tickets.get("open_tickets", {})
+        changed = False
+        for channel_id, ticket_data in open_tickets.items():
+            if ticket_data.get("claimed_by_id") != member.id or ticket_data.get("closed", False):
+                continue
+
+            now = datetime.datetime.now().isoformat()
+            ticket_data.setdefault("events", []).append({
+                "type": "claimer_left",
+                "timestamp": now,
+                "user_id": member.id,
+                "user_name": member.display_name
+            })
+            ticket_data["previous_claimer_id"] = ticket_data.get("claimed_by_id")
+            ticket_data["previous_claimer_name"] = ticket_data.get("claimed_by_name")
+            ticket_data["claimed_by_id"] = None
+            ticket_data["claimed_by_name"] = None
+            ticket_data["claimed_at"] = None
+            ticket_data["last_activity"] = now
+            changed = True
+
+            channel = bot.get_channel(int(channel_id))
+            if channel:
+                staff_role = channel.guild.get_role(TICKET_STAFF_ROLE_ID)
+                if staff_role:
+                    try:
+                        await channel.set_permissions(staff_role, view_channel=True, send_messages=True, read_message_history=True)
+                    except Exception:
+                        pass
+
+        if changed:
+            tickets["open_tickets"] = open_tickets
+            await save_tickets(tickets)
+    except Exception as e:
+        print(f"Error handling ticket claimer leave: {e}")
+
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -2026,7 +2103,7 @@ def build_admin_help(guild):
         "🛡️ **الإشراف:** `!وارن @user السبب` `!تشيك @user` `!وارنات` `!شيل @user` `!شيل_كل`\n"
         "🔇 **التايم:** `!اسكت @user` (اختصارات: `!تايم` `!اص`) `!اسكت @user 15m` `!تكلم @user`\n"
         "⛓️ **السجن:** `!سجن @user [سبب]` `!افراج @user`\n"
-        "🛠️ **الإدارة:** `!برا @user` `!حذف عدد` (اختصار: `!م`) `!rename الاسم` `!قفل` `!فتح`\n"
+        "🛠️ **الإدارة:** `!باند @user [سبب]` `!رتب @user اسم/ID/منشن` `!برا @user` `!حذف عدد` (اختصار: `!م`) `!rename الاسم` `!قفل` `!فتح`\n"
         "📊 **المعلومات:** `!s` `!u @user`\n"
         "⚙️ **الإعداد:** `/server_set` لتعيين رتبة الإدارة يدوياً\n"
         "🎫 **نظام التذاكر:** `/set_ticket` `/set_transcript`\n"
@@ -2601,6 +2678,91 @@ async def kick_user(ctx, member: discord.Member, *, reason: str = "لا يوجد
         await ctx.send(bold_msg(f"تم طرد {member.mention} بنجاح.", "🥾"))
     except Exception as e:
         await ctx.send(bold_msg(f"فشل الطرد: {e}", "❌"))
+
+@bot.command(name="باند", aliases=["ban"])
+async def ban_member(ctx: commands.Context, member: discord.Member, *, reason: str = "لا يوجد سبب محدد"):
+    """Ban a member using the same existing moderation permission system."""
+    if not check_permissions(ctx):
+        return
+    if member.id == MY_DISCORD_ID or member.id == ctx.author.id or member.bot:
+        await ctx.send(bold_msg("لا يمكنك تنفيذ الباند على هذا العضو.", "❌"))
+        return
+    if ctx.guild.owner_id == member.id:
+        await ctx.send(bold_msg("لا يمكن حظر مالك السيرفر.", "❌"))
+        return
+    me = ctx.guild.me
+    if me is None or me.top_role <= member.top_role:
+        await ctx.send(bold_msg("لا أملك صلاحية حظر هذا العضو بسبب ترتيب الرتب.", "❌"))
+        return
+    try:
+        await member.ban(reason=reason)
+        await ctx.send(bold_msg(f"تم حظر {member.mention} بنجاح • السبب: {reason}", "🔨"))
+    except discord.Forbidden:
+        await ctx.send(bold_msg("لا أملك صلاحية حظر هذا العضو.", "❌"))
+    except Exception as e:
+        await ctx.send(bold_msg(f"فشل الباند: {e}", "❌"))
+
+
+def resolve_role_from_text(guild: discord.Guild, role_text: str) -> discord.Role | None:
+    """Resolve a role by mention, ID, or exact Arabic/name match."""
+    raw = role_text.strip()
+    role_id = None
+    if raw.startswith("<@&") and raw.endswith(">"):
+        try:
+            role_id = int(raw[3:-1])
+        except ValueError:
+            role_id = None
+    elif raw.isdigit():
+        role_id = int(raw)
+
+    if role_id is not None:
+        role = guild.get_role(role_id)
+        if role:
+            return role
+
+    cleaned = clean_arabic_text(raw)
+    for role in guild.roles:
+        if clean_arabic_text(role.name) == cleaned:
+            return role
+    return None
+
+
+@bot.command(name="رتب", aliases=["role"])
+async def give_role(ctx: commands.Context, member: discord.Member, *, role_text: str):
+    """Give a role by mention, ID, or role name (e.g. !رتب @user مسجون)."""
+    if not check_permissions(ctx):
+        return
+
+    role = resolve_role_from_text(ctx.guild, role_text)
+    if role is None:
+        await ctx.send(bold_msg(f"لم أجد رتبة باسم أو ID `{role_text}`.", "❌"))
+        return
+    if role.is_default() or role.managed:
+        await ctx.send(bold_msg("لا يمكن إعطاء هذه الرتبة.", "❌"))
+        return
+    if member.bot:
+        await ctx.send(bold_msg("لا يفضل إعطاء الرتب للبوتات بهذا الأمر.", "❌"))
+        return
+    if role in member.roles:
+        await ctx.send(bold_msg(f"{member.mention} يملك هذه الرتبة بالفعل.", "⚠️"))
+        return
+
+    me = ctx.guild.me
+    if me is None or role >= me.top_role:
+        await ctx.send(bold_msg("لا أستطيع إعطاء هذه الرتبة لأن رتبة البوت ليست أعلى منها.", "❌"))
+        return
+    if member == ctx.guild.me:
+        await ctx.send(bold_msg("لا يمكنك استخدام هذا الأمر على البوت.", "❌"))
+        return
+
+    try:
+        await member.add_roles(role, reason=f"منح رتبة بواسطة {ctx.author}")
+        await ctx.send(bold_msg(f"تم إعطاء {role.mention} إلى {member.mention} بنجاح.", "✅"))
+    except discord.Forbidden:
+        await ctx.send(bold_msg("لا أملك صلاحية إدارة هذه الرتبة أو العضو.", "❌"))
+    except Exception as e:
+        await ctx.send(bold_msg(f"فشل إعطاء الرتبة: {e}", "❌"))
+
 
 @bot.command(name="سجن")
 async def jail_member(ctx, member: discord.Member, *, reason: str = "لا يوجد سبب محدد"):
