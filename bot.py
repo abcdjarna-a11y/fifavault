@@ -1972,7 +1972,7 @@ class TimeoutView(discord.ui.View):
         super().__init__(timeout=60)
         self.add_item(TimeoutSelect(target, author_id))
 
-@bot.command(name="اسكت")
+@bot.command(name=" تايم ,اسكت")
 async def mute_command(ctx: commands.Context, member: discord.Member = None, duration: str = None):
     if not check_permissions(ctx):
         return
@@ -2648,7 +2648,7 @@ async def hide_and_seek(ctx):
 # ==============================================================================
 # Core moderation commands (unchanged)
 # ==============================================================================
-@bot.command(name="rename")
+@bot.command(name="rename_a")
 async def rename(ctx, *, new_name: str):
     if not check_permissions(ctx):
         return
@@ -2679,7 +2679,7 @@ async def kick_user(ctx, member: discord.Member, *, reason: str = "لا يوجد
     except Exception as e:
         await ctx.send(bold_msg(f"فشل الطرد: {e}", "❌"))
 
-@bot.command(name="باند", aliases=["ban"])
+@bot.command(name="باند , لف , لباريس")
 async def ban_member(ctx: commands.Context, member: discord.Member, *, reason: str = "لا يوجد سبب محدد"):
     """Ban a member using the same existing moderation permission system."""
     if not check_permissions(ctx):
@@ -2727,7 +2727,7 @@ def resolve_role_from_text(guild: discord.Guild, role_text: str) -> discord.Role
     return None
 
 
-@bot.command(name="رتب", aliases=["role"])
+@bot.command(name="رتب")
 async def give_role(ctx: commands.Context, member: discord.Member, *, role_text: str):
     """Give a role by mention, ID, or role name (e.g. !رتب @user مسجون)."""
     if not check_permissions(ctx):
