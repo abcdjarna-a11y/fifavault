@@ -1896,7 +1896,7 @@ class TimeoutView(discord.ui.View):
         self.add_item(TimeoutSelect(target, author_id))
 
 # FIX ALIASES: !اسكت aliases: تايم, اسكت, اص
-@bot.command(name="اسكت")
+@bot.command(name="اسكت", aliases=["تايم"])
 async def mute_command(ctx: commands.Context, member: discord.Member = None, duration: str = None):
     if not check_permissions(ctx):
         return
@@ -3178,7 +3178,7 @@ async def unjail_member(ctx: commands.Context, member: discord.Member):
         await ctx.send(bold_msg(f"فشل الإفراج: {e}", "❌"))
 
 # FIX ALIAS: قفل
-@bot.command(name="قفل")
+@bot.command(name="قفل", aliases=["ق"])
 async def lock_channel(ctx):
     if not check_permissions(ctx):
         return
@@ -3192,7 +3192,7 @@ async def lock_channel(ctx):
         await ctx.send(bold_msg(f"فشل قفل الروم: {e}", "❌"))
 
 # FIX ALIAS: فتح
-@bot.command(name="فتح")
+@bot.command(name="فتح", aliases=["ف"])
 async def unlock_channel(ctx):
     if not check_permissions(ctx):
         return
