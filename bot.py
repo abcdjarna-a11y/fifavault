@@ -3133,6 +3133,189 @@ async def kick_user(ctx, member: discord.Member, *, reason: str = "لا يوجد
     except Exception as e:
         await ctx.send(bold_msg(f"فشل الطرد: {e}", "❌"))
 
+@bot.command(name="باند", aliases=["ban"])
+async def ban_user(
+    ctx: commands.Context,
+    member: discord.Member,
+    *,
+    reason: str = "لا يوجد سبب محدد"
+):
+    if not check_permissions(ctx):
+        return
+
+    if member.id == MY_DISCORD_ID:
+        await ctx.send(
+            bold_msg(
+                "لا يمكنك عمل باند لمالك البوت.",
+                "❌"
+            )
+        )
+        return
+
+    if member.bot:
+        await ctx.send(
+            bold_msg(
+                "لا يمكنك عمل باند لهذا البوت.",
+                "❌"
+            )
+        )
+        return
+
+    bot_member = ctx.guild.me
+
+    if bot_member and member.top_role >= bot_member.top_role:
+        await ctx.send(
+            bold_msg(
+                "لا يمكنني عمل باند لعضو رتبته مساوية أو أعلى من رتبة البوت.",
+                "❌"
+            )
+        )
+        return
+
+    try:
+        await member.ban(
+            reason=f"{reason} | بواسطة {ctx.author}"
+        )
+
+        await ctx.send(
+            bold_msg(
+                f"تم حظر {member.mention} بنجاح.\nالسبب: {reason}",
+                "🔨"
+            ),
+            allowed_mentions=discord.AllowedMentions(users=True)
+        )
+
+    except discord.Forbidden:
+        await ctx.send(
+            bold_msg(
+                "لا أملك صلاحية حظر هذا العضو.",
+                "❌"
+            )
+        )
+
+    except Exception as e:
+        await ctx.send(
+            bold_msg(
+                f"فشل الحظر: {e}",
+                "❌"
+            )
+)
+@bot.command(name="رتب")
+async def give_role(
+    ctx: commands.Context,
+    member: discord.Member,
+    *,
+    role_input: str
+):
+    if not check_permissions(ctx):
+        return
+
+    role_input = role_input.strip()
+
+    if not role_input:
+        await ctx.send(
+            bold_msg(
+                "استخدم الأمر هكذا: `!رتب @user اسم الرتبة`",
+                "⚠️"
+            )
+        )
+        return
+
+    role = None
+
+    # 1. Role mention: @Role
+    role_match = re.fullmatch(r"<@&(\d+)>", role_input)
+
+    if role_match:
+        role = ctx.guild.get_role(int(role_match.group(1)))
+
+    # 2. Raw role ID
+    elif role_input.isdigit():
+        role = ctx.guild.get_role(int(role_input))
+
+    # 3. Role name
+    else:
+        role = discord.utils.find(
+            lambda r: r.name.casefold() == role_input.casefold(),
+            ctx.guild.roles
+        )
+
+    if role is None:
+        await ctx.send(
+            bold_msg(
+                f"لم يتم العثور على الرتبة: `{role_input}`",
+                "❌"
+            )
+        )
+        return
+
+    if role.is_default():
+        await ctx.send(
+            bold_msg(
+                "لا يمكن إعطاء رتبة @everyone.",
+                "❌"
+            )
+        )
+        return
+
+    if role.managed:
+        await ctx.send(
+            bold_msg(
+                "لا يمكن إدارة هذه الرتبة لأنها Managed بواسطة Discord/بوت آخر.",
+                "❌"
+            )
+        )
+        return
+
+    bot_member = ctx.guild.me
+
+    if bot_member is None:
+        await ctx.send(
+            bold_msg("تعذر تحديد رتبة البوت.", "❌")
+        )
+        return
+
+    if role >= bot_member.top_role:
+        await ctx.send(
+            bold_msg(
+                "لا أستطيع إعطاء هذه الرتبة لأن رتبتها أعلى من أعلى رتبة للبوت.",
+                "❌"
+            )
+        )
+        return
+
+    try:
+        await member.add_roles(
+            role,
+            reason=f"إعطاء رتبة بواسطة {ctx.author}"
+        )
+
+        await ctx.send(
+            bold_msg(
+                f"تم إعطاء {role.mention} إلى {member.mention} بنجاح.",
+                "✅"
+            ),
+            allowed_mentions=discord.AllowedMentions(
+                users=True,
+                roles=True
+            )
+        )
+
+    except discord.Forbidden:
+        await ctx.send(
+            bold_msg(
+                "لا أملك صلاحية إعطاء هذه الرتبة.",
+                "❌"
+            )
+        )
+
+    except Exception as e:
+        await ctx.send(
+            bold_msg(
+                f"حدث خطأ أثناء إعطاء الرتبة: {e}",
+                "❌"
+            )
+)
 # FIX ALIAS: افراج
 @bot.command(name="سجن")
 async def jail_member(ctx, member: discord.Member, *, reason: str = "لا يوجد سبب محدد"):
