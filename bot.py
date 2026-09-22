@@ -467,6 +467,10 @@ _RAW_KEYWORD_REPLIES = {
         "See you later, have a wonderful time ahead 🌅",
         "Bye friend, stay safe and awesome! ✨"
     ],
+    ("امير", "أمير"): [
+        "<@1183582347950563439> مشغول 🛑",
+        "لا تقعد تزعجه قلنا لك مشغول 🛑",
+    ],
 }
 
 # FIX #3: Pre-build a flat dict mapping cleaned_key -> replies list, done ONCE at startup.
