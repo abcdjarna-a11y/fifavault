@@ -3133,7 +3133,7 @@ async def kick_user(ctx, member: discord.Member, *, reason: str = "لا يوجد
     except Exception as e:
         await ctx.send(bold_msg(f"فشل الطرد: {e}", "❌"))
 
-@bot.command(name="باند", aliases=["ban"])
+@bot.command(name="باند", aliases=["لباريس", "لف"])
 async def ban_user(
     ctx: commands.Context,
     member: discord.Member,
