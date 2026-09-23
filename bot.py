@@ -1910,56 +1910,59 @@ class TicketCloseConfirmView(discord.ui.View):
     value=ticket_data.get("claimed_by_name", "لم يتم الاستلام"),
     inline=True
 )
+try:
+            log_embed.add_field(
+                name="وقت الاستلام",
+                value=ticket_data.get("claimed_at", "N/A"),
+                inline=True
+            )
 
-    log_embed.add_field(
-    name="وقت الاستلام",
-    value=ticket_data.get("claimed_at", "N/A"),
-    inline=True
-)
+            log_embed.add_field(
+                name="تم الإغلاق بواسطة",
+                value=f"<@{ticket_data.get('closed_by_id', interaction.user.id)}>",
+                inline=True
+            )
 
-    log_embed.add_field(
-    name="تم الإغلاق بواسطة",
-    value=f"<@{ticket_data.get('closed_by_id', interaction.user.id)}>",
-    inline=True
-)
+            log_embed.add_field(
+                name="وقت الإغلاق",
+                value=ticket_data.get("closed_at", "N/A"),
+                inline=True
+            )
 
-    log_embed.add_field(
-    name="وقت الإغلاق",
-    value=ticket_data.get("closed_at", "N/A"),
-    inline=True
-)
+            takeover_events = [
+                e
+                for e in ticket_data.get("events", [])
+                if e.get("type") == "takeover"
+            ]
 
-takeover_events = [
-    e
-    for e in ticket_data.get("events", [])
-    if e.get("type") == "takeover"
-]
+            log_embed.add_field(
+                name="Owner Takeover",
+                value="نعم" if takeover_events else "لا",
+                inline=True
+            )
 
-    log_embed.add_field(
-    name="Owner Takeover",
-    value="نعم" if takeover_events else "لا",
-    inline=True
-)
+            if takeover_events:
+                latest_takeover = takeover_events[-1]
 
-if takeover_events:
-    latest_takeover = takeover_events[-1]
+                log_embed.add_field(
+                    name="تفاصيل Owner Takeover",
+                    value=(
+                        f"{latest_takeover.get('from_user_name', 'لا أحد')} "
+                        f"→ "
+                        f"{latest_takeover.get('user_name', 'غير معروف')}\n"
+                        f"{latest_takeover.get('timestamp', 'N/A')}"
+                    ),
+                    inline=False
+                )
 
-    log_embed.add_field(
-        name="تفاصيل Owner Takeover",
-        value=(
-            f"{latest_takeover.get('from_user_name', 'لا أحد')} "
-            f"→ "
-            f"{latest_takeover.get('user_name', 'غير معروف')}\n"
-            f"{latest_takeover.get('timestamp', 'N/A')}"
-        ),
-        inline=False
-    )
+            log_embed.add_field(
+                name="سبب الإغلاق",
+                value=ticket_data.get("close_reason", "غير محدد"),
+                inline=False
+            )
 
-log_embed.add_field(
-    name="سبب الإغلاق",
-    value=ticket_data.get("close_reason", "غير محدد"),
-    inline=False
-)
+        except Exception as e:
+            print(f"حدث خطأ أثناء بناء log_embed: {e}")
 
                     try:
                         await transcript_channel.send(embed=log_embed, file=transcript_file)
