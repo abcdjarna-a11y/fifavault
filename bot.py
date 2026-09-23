@@ -1905,12 +1905,8 @@ class TicketCloseConfirmView(discord.ui.View):
                     log_embed.add_field(name="التذكرة", value=channel.name, inline=True)
                     log_embed.add_field(name="تم الفتح بواسطة", value=f"<@{ticket_data.get('creator_id')}>", inline=True)
                     log_embed.add_field(name="تاريخ الفتح", value=ticket_data.get('created_at', 'N/A'), inline=True)
-                    log_embed.add_field(
-    name="مستلم التكت",
-    value=ticket_data.get("claimed_by_name", "لم يتم الاستلام"),
-    inline=True
-)
-try:
+                    log_embed.add_field(name="مستلم التكت", value=ticket_data.get("claimed_by_name", "لم يتم الاستلام"),inline=True
+                    )
             log_embed.add_field(
                 name="وقت الاستلام",
                 value=ticket_data.get("claimed_at", "N/A"),
@@ -1960,7 +1956,7 @@ try:
                 value=ticket_data.get("close_reason", "غير محدد"),
                 inline=False
             )
-except Exception as e:
+        except Exception as e:
             print(f"حدث خطأ أثناء بناء log_embed: {e}")
             
                     try:
