@@ -1911,19 +1911,19 @@ class TicketCloseConfirmView(discord.ui.View):
     inline=True
 )
 
-log_embed.add_field(
+    log_embed.add_field(
     name="وقت الاستلام",
     value=ticket_data.get("claimed_at", "N/A"),
     inline=True
 )
 
-log_embed.add_field(
+    log_embed.add_field(
     name="تم الإغلاق بواسطة",
     value=f"<@{ticket_data.get('closed_by_id', interaction.user.id)}>",
     inline=True
 )
 
-log_embed.add_field(
+    log_embed.add_field(
     name="وقت الإغلاق",
     value=ticket_data.get("closed_at", "N/A"),
     inline=True
@@ -1935,7 +1935,7 @@ takeover_events = [
     if e.get("type") == "takeover"
 ]
 
-log_embed.add_field(
+    log_embed.add_field(
     name="Owner Takeover",
     value="نعم" if takeover_events else "لا",
     inline=True
