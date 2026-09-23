@@ -1961,7 +1961,7 @@ class TicketCloseConfirmView(discord.ui.View):
                 inline=False
             )
 
-        except Exception as e:
+    except Exception as e:
             print(f"حدث خطأ أثناء بناء log_embed: {e}")
 
                     try:
