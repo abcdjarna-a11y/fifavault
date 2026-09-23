@@ -1375,7 +1375,7 @@ class TicketControlView(discord.ui.View):
             except:
                 pass
     
-       @discord.ui.button(
+    @discord.ui.button(
         label="قفل التكت",
         emoji="🔒",
         style=discord.ButtonStyle.danger,
