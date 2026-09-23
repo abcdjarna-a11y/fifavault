@@ -1056,15 +1056,8 @@ class TicketPanelView(discord.ui.View):
         style=discord.ButtonStyle.secondary,
         custom_id="ticket:admin_application"
     )
-    async def admin_application(
-        self,
-        interaction: discord.Interaction,
-        button: discord.ui.Button
-    ):
-        await self.create_ticket(
-            interaction,
-            "admin_application"
-        )
+    async def admin_application (self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.create_ticket(interaction, "admin_application")
         
     async def create_ticket(self, interaction: discord.Interaction, ticket_type: str):
         """Handle ticket creation"""
