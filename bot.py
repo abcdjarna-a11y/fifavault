@@ -1905,7 +1905,7 @@ class TicketCloseConfirmView(discord.ui.View):
                     log_embed.add_field(name="التذكرة", value=channel.name, inline=True)
                     log_embed.add_field(name="تم الفتح بواسطة", value=f"<@{ticket_data.get('creator_id')}>", inline=True)
                     log_embed.add_field(name="تاريخ الفتح", value=ticket_data.get('created_at', 'N/A'), inline=True)
-                   log_embed.add_field(
+                    log_embed.add_field(
     name="مستلم التكت",
     value=ticket_data.get("claimed_by_name", "لم يتم الاستلام"),
     inline=True
