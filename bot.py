@@ -1712,7 +1712,7 @@ async def finalize_ticket_close(
     ) 
 
     class TicketCloseOtherReasonModal(discord.ui.Modal, title="سبب إغلاق التذكرة"):
-    reason = discord.ui.TextInput(
+       reason = discord.ui.TextInput(
         label="اكتب سبب الإغلاق",
         placeholder="اكتب السبب هنا...",
         required=True,
