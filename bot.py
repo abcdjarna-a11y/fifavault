@@ -1910,7 +1910,7 @@ class TicketCloseConfirmView(discord.ui.View):
     value=ticket_data.get("claimed_by_name", "لم يتم الاستلام"),
     inline=True
 )
-try:
+    try:
             log_embed.add_field(
                 name="وقت الاستلام",
                 value=ticket_data.get("claimed_at", "N/A"),
