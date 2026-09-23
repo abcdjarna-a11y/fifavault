@@ -697,7 +697,7 @@ def get_ticket_type_name_ar(ticket_type: str) -> str:
     types = {
         "technical": "〢🎫・الدعم・الفني",
         "verification": "〢✅・توثيق",
-        "complaint": "〢🎟️・شكوى"
+        "complaint": "〢🎟️・شكوى",
         "admin_application": "〢👮・تقديم・الإدارة"
     }
     return types.get(ticket_type, ticket_type)
