@@ -1959,9 +1959,9 @@ class TicketCloseConfirmView(discord.ui.View):
         except Exception as e:
             print(f"حدث خطأ أثناء بناء log_embed: {e}")
             
-                    try:
+        try:
                         await transcript_channel.send(embed=log_embed, file=transcript_file)
-                    except Exception as e:
+        except Exception as e:
                         print(f"Error sending transcript: {e}")
             
             # Remove from open tickets
