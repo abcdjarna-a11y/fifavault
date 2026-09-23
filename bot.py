@@ -1728,8 +1728,8 @@ async def finalize_ticket_close(
         )
 
         class TicketCloseReasonSelect(discord.ui.Select):
-    def __init__(self, closer_id: int):
-        self.closer_id = closer_id
+           def __init__(self, closer_id: int):
+              self.closer_id = closer_id
 
         options = [
             discord.SelectOption(
