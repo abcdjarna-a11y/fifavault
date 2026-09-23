@@ -45,6 +45,20 @@ RULES_CHANNEL_ID = 1541195966105911368
 TWITTER_CHANNEL_ID = 1541223961332031528
 ANNOUNCEMENTS_CHANNEL_ID = 1541192362204860436
 
+# ==============================================================================
+# BOT TEAM SIGN SYSTEM
+# ==============================================================================
+
+TEAM_OWNER_ROLE_ID = 1541192323101229187
+
+TEAM_FILE = "teams_data.json"
+TEAM_MAX_PLAYERS = 25
+
+TEAM_OFFER_DURATION = datetime.timedelta(hours=7)
+TEAM_DEMAND_DURATION = datetime.timedelta(hours=5)
+
+TEAM_TIMEOUTS = set()
+
 # ── TICKET SYSTEM CONFIGURATION (NEW) ────────────────────────────────────────
 TICKET_STAFF_ROLE_ID = 1541192320844566658  # Normal ticket staff who can claim
 TICKET_MENTION_ROLE_ID = 1541192320844566658  # Role to mention in new tickets
@@ -142,6 +156,13 @@ async def load_ticket_config():
 
 async def save_ticket_config(data):
     await async_save_json(TICKET_CONFIG_FILE, data)
+
+async def load_teams():
+    return await async_load_json(TEAM_FILE)
+
+
+async def save_teams(data):
+    await async_save_json(TEAM_FILE, data)
     
 intents = discord.Intents.default()
 intents.message_content = True
@@ -199,6 +220,193 @@ def clean_arabic_text(text: str) -> str:
 def member_has_role(member: discord.Member, role_id: int) -> bool:
     return any(r.id == role_id for r in getattr(member, "roles", []))
 
+
+def get_team_by_role_id(data: dict, role_id: int):
+    teams = data.get("teams", {})
+
+    for team_id, team in teams.items():
+        if team.get("role_id") == role_id:
+            return team_id, team
+
+    return None, None
+
+
+def get_member_team(data: dict, member: discord.Member):
+    """
+    Return the team whose role the member currently has.
+    """
+    teams = data.get("teams", {})
+
+    for team_id, team in teams.items():
+        role_id = team.get("role_id")
+
+        if role_id and member_has_role(member, role_id):
+            return team_id, team
+
+    return None, None
+
+
+def get_team_player_count(
+    guild: discord.Guild,
+    role_id: int
+) -> int:
+    role = guild.get_role(role_id)
+
+    if not role:
+        return 0
+
+    # Count real members only.
+    return sum(
+        1
+        for member in role.members
+        if not member.bot
+    )
+
+
+def team_is_timed_out(team_id: str) -> bool:
+    return team_id in TEAM_TIMEOUTS
+
+
+async def refresh_team_board(guild: discord.Guild):
+    """
+    Rebuild the teams embed in the configured teams channel.
+    """
+    config = await load_ticket_config()
+
+    teams_channel_id = config.get("teams_channel_id")
+
+    if not teams_channel_id:
+        return
+
+    channel = guild.get_channel(
+        int(teams_channel_id)
+    )
+
+    if not channel:
+        return
+
+    data = await load_teams()
+    teams = data.get("teams", {})
+
+    embed = discord.Embed(
+        title="🏆 Team Sign",
+        description=(
+            "**__ الأندية المسجلة في السيرفر __**\n\n"
+            "كل نادي موضح معه الرئيس وعدد اللاعبين."
+        ),
+        color=pink_color()
+    )
+
+    embed.set_thumbnail(
+        url=TOUCHLINE_IMAGE_URL
+    )
+
+    if not teams:
+        embed.description += "\n\n**لا توجد أندية مسجلة حاليًا.**"
+    else:
+        sorted_teams = sorted(
+            teams.items(),
+            key=lambda item: int(
+                item[1].get("number", 0)
+            )
+        )
+
+        for index, (team_id, team) in enumerate(
+            sorted_teams,
+            start=1
+        ):
+            role = guild.get_role(
+                int(team.get("role_id", 0))
+            )
+
+            if not role:
+                continue
+
+            owner_id = team.get("owner_id")
+
+            if owner_id:
+                owner_text = f"<@{owner_id}>"
+            else:
+                owner_text = "لم يتم تعيين رئيس"
+
+            player_count = get_team_player_count(
+                guild,
+                role.id
+            )
+
+            emoji = team.get(
+                "emoji",
+                "⚽"
+            )
+
+            status = ""
+
+            if team_is_timed_out(team_id):
+                status = "\n⛔ **TEAM TIMEOUT**"
+
+            embed.add_field(
+                name=f"{index}- {emoji} {role.mention}",
+                value=(
+                    f"**Owner :** {owner_text}\n"
+                    f"**Players :** "
+                    f"`{TEAM_MAX_PLAYERS}/{player_count}`"
+                    f"{status}"
+                ),
+                inline=False
+            )
+
+    embed.set_footer(
+        text="Bot Team Sign"
+    )
+
+    # Store the board message ID so we edit the same message.
+    board_message_id = config.get(
+        "teams_board_message_id"
+    )
+
+    try:
+        if board_message_id:
+            try:
+                message = await channel.fetch_message(
+                    int(board_message_id)
+                )
+
+                await message.edit(
+                    embed=embed
+                )
+                return
+
+            except discord.NotFound:
+                pass
+
+        message = await channel.send(
+            embed=embed
+        )
+
+        config["teams_board_message_id"] = message.id
+        await save_ticket_config(config)
+
+    except Exception as e:
+        print(
+            f"Error refreshing team board: {e}"
+        )
+
+
+async def send_team_dm(
+    member: discord.Member,
+    embed: discord.Embed
+):
+    try:
+        await member.send(
+            embed=embed
+        )
+        return True
+    except Exception as e:
+        print(
+            f"Could not DM {member}: {e}"
+        )
+        return False
+        
 # ── Timeout choices ───────────────────────────────────────────────────────────
 TIMEOUT_OPTIONS = [
     ("5m", "warn"),
@@ -490,6 +698,7 @@ def get_ticket_type_name_ar(ticket_type: str) -> str:
         "technical": "〢🎫・الدعم・الفني",
         "verification": "〢✅・توثيق",
         "complaint": "〢🎟️・شكوى"
+        "admin_application": "〢👮・تقديم・الإدارة"
     }
     return types.get(ticket_type, ticket_type)
 
@@ -598,6 +807,38 @@ async def generate_ticket_transcript(channel: discord.TextChannel, ticket_data: 
         messages = []
         async for msg in channel.history(limit=1000, oldest_first=True):
             messages.append(msg)
+      
+        takeover_events = [
+            event
+            for event in ticket_data.get("events", [])
+            if event.get("type") == "takeover"
+        ]
+
+        if takeover_events:
+            takeover_status = "نعم"
+            takeover_details = "<br>".join(
+                (
+                    f"{event.get('from_user_name') or 'لا أحد'} "
+                    f"→ "
+                    f"{event.get('user_name') or 'غير معروف'} "
+                    f"({event.get('timestamp', 'N/A')})"
+                )
+                for event in takeover_events
+            )
+        else:
+            takeover_status = "لا"
+            takeover_details = "لم يحدث Owner Takeover."
+
+        event_history = ticket_data.get("events", [])
+
+        event_history_html = "<br>".join(
+            (
+                f"[{event.get('timestamp', 'N/A')}] "
+                f"{event.get('type', 'unknown')} - "
+                f"{event.get('user_name', 'Unknown')}"
+            )
+            for event in event_history
+        )
         
         html = f"""
 <!DOCTYPE html>
@@ -691,14 +932,49 @@ async def generate_ticket_transcript(channel: discord.TextChannel, ticket_data: 
             <div class="info-row">
                 <span class="label">تاريخ الفتح:</span> {ticket_data.get('created_at', 'N/A')}
             </div>
-            <div class="info-row">
-                <span class="label">تم الاستلام بواسطة:</span> {ticket_data.get('claimed_by_name', 'لم يتم الاستلام بعد')}
+          <div class="info-row">
+                <span class="label">مستلم التكت:</span>
+                {ticket_data.get('claimed_by_name', 'لم يتم الاستلام بعد')}
             </div>
+
             <div class="info-row">
-                <span class="label">تاريخ الاستلام:</span> {ticket_data.get('claimed_at', 'N/A')}
+                <span class="label">وقت الاستلام:</span>
+                {ticket_data.get('claimed_at', 'N/A')}
             </div>
+
             <div class="info-row">
-                <span class="label">الحالة:</span> {'مغلقة' if ticket_data.get('closed') else 'مفتوحة'}
+                <span class="label">Owner Takeover:</span>
+                {takeover_status}
+            </div>
+
+            <div class="info-row">
+                <span class="label">تفاصيل Owner Takeover:</span>
+                {takeover_details}
+            </div>
+
+            <div class="info-row">
+                <span class="label">أغلق التكت:</span>
+                {ticket_data.get('closed_by_name', 'N/A')}
+            </div>
+
+            <div class="info-row">
+                <span class="label">وقت الإغلاق:</span>
+                {ticket_data.get('closed_at', 'N/A')}
+            </div>
+
+            <div class="info-row">
+                <span class="label">سبب الإغلاق:</span>
+                {ticket_data.get('close_reason', 'N/A')}
+            </div>
+
+            <div class="info-row">
+                <span class="label">الحالة:</span>
+                {'مغلقة' if ticket_data.get('closed') else 'مفتوحة'}
+            </div>
+
+            <div class="info-row">
+                <span class="label">سجل الأحداث:</span><br>
+                {event_history_html}
             </div>
         </div>
         
@@ -773,7 +1049,23 @@ class TicketPanelView(discord.ui.View):
     )
     async def complaint(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self.create_ticket(interaction, "complaint")
-    
+
+        @discord.ui.button(
+        label="تقديم الإدارة",
+        emoji="👮",
+        style=discord.ButtonStyle.secondary,
+        custom_id="ticket:admin_application"
+    )
+    async def admin_application(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        await self.create_ticket(
+            interaction,
+            "admin_application"
+        )
+        
     async def create_ticket(self, interaction: discord.Interaction, ticket_type: str):
         """Handle ticket creation"""
         try:
@@ -1083,74 +1375,70 @@ class TicketControlView(discord.ui.View):
             except:
                 pass
     
-    @discord.ui.button(
+       @discord.ui.button(
         label="قفل التكت",
         emoji="🔒",
         style=discord.ButtonStyle.danger,
         custom_id="ticket:close"
     )
-    async def close_ticket(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Close ticket"""
+    async def close_ticket(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        """Start the ticket close-reason process."""
         try:
-            # Load ticket data
             tickets = await load_tickets()
             open_tickets = tickets.get("open_tickets", {})
             ticket_data = open_tickets.get(str(interaction.channel_id))
-            
+
             if not ticket_data:
                 await interaction.response.send_message(
                     bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
                     ephemeral=True
                 )
                 return
-            
-            # Check permissions
-            if not can_close_ticket(interaction.user, ticket_data):
+
+            if ticket_data.get("closed", False):
                 await interaction.response.send_message(
-                    bold_msg("ليس لديك صلاحية إغلاق هذه التذكرة.", "🔒"),
+                    bold_msg("التذكرة مغلقة بالفعل.", "⚠️"),
                     ephemeral=True
                 )
                 return
-            
-            # Mark as closed
-            ticket_data["closed"] = True
-            ticket_data["closed_by_id"] = interaction.user.id
-            ticket_data["closed_by_name"] = interaction.user.display_name
-            ticket_data["closed_at"] = datetime.datetime.now().isoformat()
-            ticket_data["events"].append({
-                "type": "closed",
-                "timestamp": datetime.datetime.now().isoformat(),
-                "user_id": interaction.user.id,
-                "user_name": interaction.user.display_name
-            })
-            
-            open_tickets[str(interaction.channel_id)] = ticket_data
-            tickets["open_tickets"] = open_tickets
-            await save_tickets(tickets)
-            
-            # Show confirmation
-            embed = discord.Embed(
-                title="🔒 إغلاق التذكرة",
-                description="هل أنت متأكد من قفل التذكرة؟",
-                color=pink_color()
-            )
-            
+
+            if not can_close_ticket(interaction.user, ticket_data):
+                await interaction.response.send_message(
+                    bold_msg(
+                        "ليس لديك صلاحية إغلاق هذه التذكرة.",
+                        "🔒"
+                    ),
+                    ephemeral=True
+                )
+                return
+
             await interaction.response.send_message(
-                embed=embed,
-                view=TicketCloseConfirmView()
+                embed=discord.Embed(
+                    title="🔒 سبب إغلاق التذكرة",
+                    description=(
+                        "**__ اختر السبب المناسب لإغلاق التذكرة من القائمة بالأسفل. __**"
+                    ),
+                    color=pink_color()
+                ),
+                view=TicketCloseReasonView(interaction.user.id)
             )
-            
+
         except Exception as e:
-            print(f"Error closing ticket: {e}")
+            print(f"Error starting ticket close: {e}")
             traceback.print_exc()
+
             try:
                 await interaction.response.send_message(
                     bold_msg(f"حدث خطأ: {str(e)}", "❌"),
                     ephemeral=True
                 )
-            except:
+            except Exception:
                 pass
-    
+                
     @discord.ui.button(
         label="إضافة شخص",
         emoji="👤",
@@ -1158,146 +1446,349 @@ class TicketControlView(discord.ui.View):
         custom_id="ticket:add_user"
     )
     async def add_user(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Add user to ticket"""
+        """Add a user using Discord User Select."""
         try:
-            # Load ticket data
             tickets = await load_tickets()
             open_tickets = tickets.get("open_tickets", {})
             ticket_data = open_tickets.get(str(interaction.channel_id))
-            
+
             if not ticket_data:
                 await interaction.response.send_message(
                     bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
                     ephemeral=True
                 )
                 return
-            
-            # Check if user is ticket creator
+
+            # Only the ticket creator can add people.
             if interaction.user.id != ticket_data.get("creator_id"):
                 await interaction.response.send_message(
                     bold_msg("فقط منشئ التذكرة يمكنه إضافة أشخاص.", "🔒"),
                     ephemeral=True
                 )
                 return
-            
-            # Check limit
+
             added_users = ticket_data.get("added_users", [])
+
             if len(added_users) >= 2:
                 await interaction.response.send_message(
-                    bold_msg("تم الوصول للحد الأقصى (شخصين).", "⚠️"),
+                    bold_msg("تم الوصول للحد الأقصى: شخصان فقط.", "⚠️"),
                     ephemeral=True
                 )
                 return
-            
-            # Show modal to get user
-            await interaction.response.send_modal(AddUserModal(ticket_data))
-            
+
+            embed = discord.Embed(
+                title="👤 إضافة شخص للتذكرة",
+                description="**__ اختر العضو الذي تريد إضافته من القائمة بالأسفل. __**",
+                color=pink_color()
+            )
+
+            await interaction.response.send_message(
+                embed=embed,
+                view=AddUserSelectView(
+                    channel_id=interaction.channel_id,
+                    creator_id=interaction.user.id
+                ),
+                ephemeral=True
+            )
+
         except Exception as e:
             print(f"Error adding user: {e}")
             traceback.print_exc()
+
             try:
                 await interaction.response.send_message(
                     bold_msg(f"حدث خطأ: {str(e)}", "❌"),
                     ephemeral=True
                 )
-            except:
+            except Exception:
                 pass
 
-class AddUserModal(discord.ui.Modal, title="إضافة شخص للتذكرة"):
-    """Modal to add user to ticket"""
-    
-    user_id = discord.ui.TextInput(
-        label="ID العضو",
-        placeholder="أدخل ID العضو الذي تريد إضافته",
-        required=True,
-        max_length=20
-    )
-    
-    def __init__(self, ticket_data):
-        super().__init__()
-        self.ticket_data = ticket_data
-    
-    async def on_submit(self, interaction: discord.Interaction):
+class AddUserSelectView(discord.ui.View):
+    """Discord User Select Menu for adding users to tickets."""
+
+    def __init__(self, channel_id: int, creator_id: int):
+        super().__init__(timeout=60)
+        self.channel_id = channel_id
+        self.creator_id = creator_id
+
+        select = discord.ui.UserSelect(
+            placeholder="اختر العضو الذي تريد إضافته...",
+            min_values=1,
+            max_values=1
+        )
+
+        select.callback = self.select_user
+        self.add_item(select)
+
+    async def select_user(self, interaction: discord.Interaction):
         try:
-            # Get user
-            try:
-                user_id = int(self.user_id.value.strip())
-                member = interaction.guild.get_member(user_id)
-                
-                if not member:
-                    await interaction.response.send_message(
-                        bold_msg("لم يتم العثور على العضو.", "❌"),
-                        ephemeral=True
-                    )
-                    return
-            except ValueError:
+            if interaction.user.id != self.creator_id:
                 await interaction.response.send_message(
-                    bold_msg("ID غير صحيح.", "❌"),
+                    bold_msg("هذه القائمة ليست لك.", "🔒"),
                     ephemeral=True
                 )
                 return
-            
-            # Check if already added
-            added_users = self.ticket_data.get("added_users", [])
-            if user_id in added_users:
+
+            if not interaction.guild:
                 await interaction.response.send_message(
-                    bold_msg("هذا العضو مضاف بالفعل.", "⚠️"),
+                    bold_msg("تعذر تحديد السيرفر.", "❌"),
                     ephemeral=True
                 )
                 return
-            
-            # Add permissions
-            channel = interaction.channel
+
+            tickets = await load_tickets()
+            open_tickets = tickets.get("open_tickets", {})
+            ticket_data = open_tickets.get(str(self.channel_id))
+
+            if not ticket_data:
+                await interaction.response.send_message(
+                    bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
+                    ephemeral=True
+                )
+                self.stop()
+                return
+
+            added_users = ticket_data.get("added_users", [])
+
+            if len(added_users) >= 2:
+                await interaction.response.send_message(
+                    bold_msg("تم الوصول للحد الأقصى: شخصان فقط.", "⚠️"),
+                    ephemeral=True
+                )
+                self.stop()
+                return
+
+            selected_member = self.children[0].values[0]
+
+            member = interaction.guild.get_member(selected_member.id)
+
+            if member is None:
+                await interaction.response.send_message(
+                    bold_msg("لم يتم العثور على العضو داخل السيرفر.", "❌"),
+                    ephemeral=True
+                )
+                return
+
+            if member.id == ticket_data.get("creator_id"):
+                await interaction.response.send_message(
+                    bold_msg("منشئ التذكرة موجود بالفعل داخل التذكرة.", "⚠️"),
+                    ephemeral=True
+                )
+                return
+
+            if member.bot:
+                await interaction.response.send_message(
+                    bold_msg("لا يمكن إضافة بوت إلى التذكرة.", "⚠️"),
+                    ephemeral=True
+                )
+                return
+
+            if member.id in added_users:
+                await interaction.response.send_message(
+                    bold_msg("هذا العضو مضاف بالفعل إلى التذكرة.", "⚠️"),
+                    ephemeral=True
+                )
+                return
+
+            channel = interaction.guild.get_channel(self.channel_id)
+
+            if channel is None:
+                await interaction.response.send_message(
+                    bold_msg("لم يتم العثور على قناة التذكرة.", "❌"),
+                    ephemeral=True
+                )
+                return
+
+            # Give only ticket access.
+            # The user does NOT receive any special claim/close/admin permission.
             await channel.set_permissions(
                 member,
                 view_channel=True,
                 send_messages=True,
-                read_message_history=True
+                read_message_history=True,
+                attach_files=True,
+                embed_links=True
             )
-            
-            # Update ticket data
-            added_users.append(user_id)
-            self.ticket_data["added_users"] = added_users
-            self.ticket_data["events"].append({
+
+            added_users.append(member.id)
+            ticket_data["added_users"] = added_users
+
+            ticket_data.setdefault("events", []).append({
                 "type": "user_added",
                 "timestamp": datetime.datetime.now().isoformat(),
                 "added_by_id": interaction.user.id,
                 "added_by_name": interaction.user.display_name,
-                "added_user_id": user_id,
+                "added_user_id": member.id,
                 "added_user_name": member.display_name
             })
-            
-            # Save
-            tickets = await load_tickets()
-            open_tickets = tickets.get("open_tickets", {})
-            open_tickets[str(interaction.channel_id)] = self.ticket_data
+
+            ticket_data["last_activity"] = datetime.datetime.now().isoformat()
+
+            open_tickets[str(self.channel_id)] = ticket_data
             tickets["open_tickets"] = open_tickets
             await save_tickets(tickets)
-            
-            # Update activity
-            await update_ticket_activity(interaction.channel_id)
-            
+
             await interaction.response.send_message(
-                bold_msg(f"👤 تمت إضافة {member.mention} للتذكرة بنجاح.", ""),
+                bold_msg(
+                    f"تمت إضافة {member.mention} إلى التذكرة بنجاح.",
+                    "✅"
+                ),
+                ephemeral=True,
                 allowed_mentions=discord.AllowedMentions(users=True)
             )
-            
+
+            self.stop()
+
         except Exception as e:
-            print(f"Error in add user modal: {e}")
+            print(f"Error in AddUserSelectView: {e}")
             traceback.print_exc()
+
             try:
                 await interaction.response.send_message(
                     bold_msg(f"حدث خطأ: {str(e)}", "❌"),
                     ephemeral=True
                 )
-            except:
+            except Exception:
                 pass
 
+async def finalize_ticket_close(
+    interaction: discord.Interaction,
+    reason: str
+):
+    tickets = await load_tickets()
+    open_tickets = tickets.get("open_tickets", {})
+    ticket_data = open_tickets.get(str(interaction.channel_id))
+
+    if not ticket_data:
+        await interaction.response.send_message(
+            bold_msg("لم يتم العثور على بيانات التذكرة.", "❌"),
+            ephemeral=True
+        )
+        return
+
+    if ticket_data.get("closed", False):
+        await interaction.response.send_message(
+            bold_msg("التذكرة مغلقة بالفعل.", "⚠️"),
+            ephemeral=True
+        )
+        return
+
+    now = datetime.datetime.now().isoformat()
+
+    ticket_data["closed"] = True
+    ticket_data["closed_by_id"] = interaction.user.id
+    ticket_data["closed_by_name"] = interaction.user.display_name
+    ticket_data["closed_at"] = now
+    ticket_data["close_reason"] = reason
+    ticket_data["last_activity"] = now
+
+    ticket_data.setdefault("events", []).append({
+        "type": "closed",
+        "timestamp": now,
+        "user_id": interaction.user.id,
+        "user_name": interaction.user.display_name,
+        "reason": reason
+    })
+
+    open_tickets[str(interaction.channel_id)] = ticket_data
+    tickets["open_tickets"] = open_tickets
+    await save_tickets(tickets)
+
+    embed = discord.Embed(
+        title="🔒 إغلاق التذكرة",
+        description="**__ هل أنت متأكد من قفل التذكرة؟ __**",
+        color=pink_color()
+    )
+
+    embed.add_field(
+        name="سبب الإغلاق",
+        value=f"**__ {reason} __**",
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        view=TicketCloseConfirmView()
+    ) 
+
+    class TicketCloseOtherReasonModal(discord.ui.Modal, title="سبب إغلاق التذكرة"):
+    reason = discord.ui.TextInput(
+        label="اكتب سبب الإغلاق",
+        placeholder="اكتب السبب هنا...",
+        required=True,
+        min_length=2,
+        max_length=1000,
+        style=discord.TextStyle.paragraph
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await finalize_ticket_close(
+            interaction,
+            self.reason.value.strip()
+        )
+
+        class TicketCloseReasonSelect(discord.ui.Select):
+    def __init__(self, closer_id: int):
+        self.closer_id = closer_id
+
+        options = [
+            discord.SelectOption(
+                label="تم الانتهاء من التكت",
+                description="تم التعامل مع المشكلة وإنهاء الطلب.",
+                value="تم الانتهاء من التكت"
+            ),
+            discord.SelectOption(
+                label="لم يتم الوصول إلى حل مرضي",
+                description="لم يتم الوصول إلى حل مرضي للمشكلة.",
+                value="لم يتم الوصول إلى حل مرضي"
+            ),
+            discord.SelectOption(
+                label="أخرى",
+                description="كتابة سبب مخصص لإغلاق التذكرة.",
+                value="أخرى"
+            )
+        ]
+
+        super().__init__(
+            placeholder="اختر سبب إغلاق التذكرة...",
+            min_values=1,
+            max_values=1,
+            options=options
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.closer_id:
+            await interaction.response.send_message(
+                bold_msg("هذه القائمة ليست لك.", "🔒"),
+                ephemeral=True
+            )
+            return
+
+        selected = self.values[0]
+
+        if selected == "أخرى":
+            await interaction.response.send_modal(
+                TicketCloseOtherReasonModal()
+            )
+            return
+
+        await finalize_ticket_close(
+            interaction,
+            selected
+        )
+
+
+class TicketCloseReasonView(discord.ui.View):
+    def __init__(self, closer_id: int):
+        super().__init__(timeout=60)
+        self.add_item(
+            TicketCloseReasonSelect(closer_id)
+        )
+        
 class TicketCloseConfirmView(discord.ui.View):
     """Confirmation view for ticket closure"""
     def __init__(self):
         super().__init__(timeout=60)
-        self.delete_cancelled = False
     
     @discord.ui.button(
         label="فتح",
@@ -1414,10 +1905,62 @@ class TicketCloseConfirmView(discord.ui.View):
                     log_embed.add_field(name="التذكرة", value=channel.name, inline=True)
                     log_embed.add_field(name="تم الفتح بواسطة", value=f"<@{ticket_data.get('creator_id')}>", inline=True)
                     log_embed.add_field(name="تاريخ الفتح", value=ticket_data.get('created_at', 'N/A'), inline=True)
-                    log_embed.add_field(name="تم الاستلام بواسطة", value=ticket_data.get('claimed_by_name', 'لم يتم الاستلام'), inline=True)
-                    log_embed.add_field(name="تم الإغلاق بواسطة", value=f"<@{ticket_data.get('closed_by_id', interaction.user.id)}>", inline=True)
-                    log_embed.add_field(name="سبب الحذف", value="حذف يدوي", inline=False)
-                    
+                   log_embed.add_field(
+    name="مستلم التكت",
+    value=ticket_data.get("claimed_by_id", interaction.user.id "لم يتم الاستلام"),
+    inline=True
+)
+
+log_embed.add_field(
+    name="وقت الاستلام",
+    value=ticket_data.get("claimed_at", "N/A"),
+    inline=True
+)
+
+log_embed.add_field(
+    name="تم الإغلاق بواسطة",
+    value=f"<@{ticket_data.get('closed_by_id', interaction.user.id)}>",
+    inline=True
+)
+
+log_embed.add_field(
+    name="وقت الإغلاق",
+    value=ticket_data.get("closed_at", "N/A"),
+    inline=True
+)
+
+takeover_events = [
+    e
+    for e in ticket_data.get("events", [])
+    if e.get("type") == "takeover"
+]
+
+log_embed.add_field(
+    name="Owner Takeover",
+    value="نعم" if takeover_events else "لا",
+    inline=True
+)
+
+if takeover_events:
+    latest_takeover = takeover_events[-1]
+
+    log_embed.add_field(
+        name="تفاصيل Owner Takeover",
+        value=(
+            f"{latest_takeover.get('from_user_name', 'لا أحد')} "
+            f"→ "
+            f"{latest_takeover.get('user_name', 'غير معروف')}\n"
+            f"{latest_takeover.get('timestamp', 'N/A')}"
+        ),
+        inline=False
+    )
+
+log_embed.add_field(
+    name="سبب الإغلاق",
+    value=ticket_data.get("close_reason", "غير محدد"),
+    inline=False
+)
+
                     try:
                         await transcript_channel.send(embed=log_embed, file=transcript_file)
                     except Exception as e:
@@ -1429,23 +1972,24 @@ class TicketCloseConfirmView(discord.ui.View):
                 tickets["open_tickets"] = open_tickets
                 await save_tickets(tickets)
             
-            # Start countdown with cancel option
-            countdown_view = CancelDeleteView(self)
+                       # Start deletion countdown.
             await interaction.response.edit_message(
-                content=bold_msg("🗑️ سيتم حذف التذكرة خلال 10 ثوانٍ. اضغط إلغاء لإيقاف الحذف.", ""),
+                content=bold_msg(
+                    "🗑️ سيتم حذف التذكرة خلال 10 ثوانٍ.",
+                    ""
+                ),
                 embed=None,
-                view=countdown_view
+                view=None
             )
-            
-            # Wait 10 seconds
+
             await asyncio.sleep(10)
-            
-            # Check if cancelled
-            if not self.delete_cancelled:
-                try:
-                    await channel.delete(reason=f"تم حذف التذكرة بواسطة {interaction.user.name}")
-                except:
-                    pass
+
+            try:
+                await channel.delete(
+                    reason=f"تم حذف التذكرة بواسطة {interaction.user.name}"
+                )
+            except Exception:
+                pass
             
         except Exception as e:
             print(f"Error deleting ticket: {e}")
@@ -1457,25 +2001,6 @@ class TicketCloseConfirmView(discord.ui.View):
                 )
             except:
                 pass
-
-class CancelDeleteView(discord.ui.View):
-    """View to cancel ticket deletion"""
-    def __init__(self, parent_view):
-        super().__init__(timeout=10)
-        self.parent_view = parent_view
-    
-    @discord.ui.button(
-        label="إلغاء الحذف",
-        emoji="❌",
-        style=discord.ButtonStyle.secondary
-    )
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
-        self.parent_view.delete_cancelled = True
-        await interaction.response.edit_message(
-            content=bold_msg("تم إلغاء حذف التذكرة.", "✅"),
-            view=None
-        )
-        self.stop()
 
 # ==============================================================================
 # TICKET INACTIVITY CHECKER (NEW)
@@ -1574,6 +2099,1424 @@ async def check_inactive_tickets():
         print(f"Error in inactivity checker: {e}")
         traceback.print_exc()
 
+@bot.tree.command(
+    name="set_teams",
+    description="تحديد الروم الذي تظهر فيه الأندية"
+)
+@app_commands.describe(
+    channel="روم عرض الأندية"
+)
+async def set_teams(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel
+):
+    if not check_slash_permissions(interaction):
+        await interaction.response.send_message(
+            bold_msg(
+                "ليس لديك صلاحية استخدام هذا الأمر.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
+
+    config = await load_ticket_config()
+
+    config["teams_channel_id"] = channel.id
+
+    # Reset stored board message.
+    config.pop(
+        "teams_board_message_id",
+        None
+    )
+
+    await save_ticket_config(config)
+
+    await refresh_team_board(
+        interaction.guild
+    )
+
+    await interaction.response.send_message(
+        bold_msg(
+            f"تم تحديد روم الأندية: {channel.mention}",
+            "✅"
+        ),
+        ephemeral=True
+    )
+    
+@bot.tree.command(
+    name="add_team",
+    description="إضافة نادي جديد"
+)
+@app_commands.describe(
+    role="رتبة النادي",
+    emoji="إيموجي النادي",
+    image="صورة شعار النادي"
+)
+async def add_team(
+    interaction: discord.Interaction,
+    role: discord.Role,
+    emoji: str,
+    image: discord.Attachment
+):
+    if not check_slash_permissions(interaction):
+        await interaction.response.send_message(
+            bold_msg(
+                "ليس لديك صلاحية استخدام هذا الأمر.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
+
+    config = await load_ticket_config()
+
+    if not config.get("teams_channel_id"):
+        await interaction.response.send_message(
+            bold_msg(
+                "يجب تحديد روم الأندية أولًا باستخدام `/set_teams`.",
+                "⚠️"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Prevent @everyone.
+    if role.is_default():
+        await interaction.response.send_message(
+            bold_msg(
+                "لا يمكن استخدام رتبة @everyone كنادي.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Prevent managed roles.
+    if role.managed:
+        await interaction.response.send_message(
+            bold_msg(
+                "لا يمكن استخدام رتبة Managed كنادي.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Make sure bot can manage the role.
+    if interaction.guild.me.top_role <= role:
+        await interaction.response.send_message(
+            bold_msg(
+                "رتبة النادي أعلى من رتبة البوت أو مساوية لها.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    data = await load_teams()
+
+    if "teams" not in data:
+        data["teams"] = {}
+
+    # Don't allow same role to represent two teams.
+    existing_id, existing_team = get_team_by_role_id(
+        data,
+        role.id
+    )
+
+    if existing_team:
+        await interaction.response.send_message(
+            bold_msg(
+                "هذه الرتبة مسجلة بالفعل كنادٍ.",
+                "⚠️"
+            ),
+            ephemeral=True
+        )
+        return
+
+    team_number = len(data["teams"]) + 1
+
+    team_id = str(role.id)
+
+    data["teams"][team_id] = {
+        "number": team_number,
+        "role_id": role.id,
+        "role_name": role.name,
+        "emoji": emoji,
+        "image_url": image.url,
+        "owner_id": None,
+        "created_at": datetime.datetime.now().isoformat()
+    }
+
+    await save_teams(data)
+
+    await refresh_team_board(
+        interaction.guild
+    )
+
+    embed = discord.Embed(
+        title="🏆 تم إضافة النادي",
+        description=(
+            f"{emoji} {role.mention}\n\n"
+            f"**Owner :** لم يتم تعيين رئيس\n"
+            f"**Players :** `{TEAM_MAX_PLAYERS}/"
+            f"{get_team_player_count(interaction.guild, role.id)}`"
+        ),
+        color=pink_color()
+    )
+
+    embed.set_image(
+        url=image.url
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True
+    )
+    
+@bot.tree.command(
+    name="team_timeout",
+    description="إيقاف نادي عن تقديم عروض للاعبين"
+)
+@app_commands.describe(
+    role="رتبة النادي"
+)
+async def team_timeout(
+    interaction: discord.Interaction,
+    role: discord.Role
+):
+    if not check_slash_permissions(interaction):
+        await interaction.response.send_message(
+            bold_msg(
+                "ليس لديك صلاحية استخدام هذا الأمر.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
+
+    data = await load_teams()
+
+    team_id, team = get_team_by_role_id(
+        data,
+        role.id
+    )
+
+    if not team:
+        await interaction.response.send_message(
+            bold_msg(
+                "هذه الرتبة ليست ناديًا مسجلًا.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    TEAM_TIMEOUTS.add(
+        team_id
+    )
+
+    await refresh_team_board(
+        interaction.guild
+    )
+
+    await interaction.response.send_message(
+        bold_msg(
+            f"تم وضع {role.mention} في Team Timeout. "
+            "لن يستطيع النادي تقديم عروض للاعبين.",
+            "⛔"
+        )
+    )
+    
+@bot.tree.command(
+    name="team_untimeout",
+    description="إزالة Team Timeout عن النادي"
+)
+@app_commands.describe(
+    role="رتبة النادي"
+)
+async def team_untimeout(
+    interaction: discord.Interaction,
+    role: discord.Role
+):
+    if not check_slash_permissions(interaction):
+        await interaction.response.send_message(
+            bold_msg(
+                "ليس لديك صلاحية استخدام هذا الأمر.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
+
+    data = await load_teams()
+
+    team_id, team = get_team_by_role_id(
+        data,
+        role.id
+    )
+
+    if not team:
+        await interaction.response.send_message(
+            bold_msg(
+                "هذه الرتبة ليست ناديًا مسجلًا.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    TEAM_TIMEOUTS.discard(
+        team_id
+    )
+
+    await refresh_team_board(
+        interaction.guild
+    )
+
+    await interaction.response.send_message(
+        bold_msg(
+            f"تم إزالة Team Timeout عن {role.mention}.",
+            "✅"
+        )
+    )
+    
+@bot.tree.command(
+    name="appoint_fo",
+    description="تعيين رئيس للنادي"
+)
+@app_commands.describe(
+    role="رتبة النادي",
+    user="رئيس النادي"
+)
+async def appoint_fo(
+    interaction: discord.Interaction,
+    role: discord.Role,
+    user: discord.Member
+):
+    if not check_slash_permissions(interaction):
+        await interaction.response.send_message(
+            bold_msg(
+                "ليس لديك صلاحية استخدام هذا الأمر.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
+
+    data = await load_teams()
+
+    team_id, team = get_team_by_role_id(
+        data,
+        role.id
+    )
+
+    if not team:
+        await interaction.response.send_message(
+            bold_msg(
+                "هذه الرتبة ليست ناديًا مسجلًا.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    if not member_has_role(
+        user,
+        role.id
+    ):
+        await interaction.response.send_message(
+            bold_msg(
+                "الشخص الذي تريد تعيينه رئيسًا يجب أن يمتلك رتبة النادي.",
+                "⚠️"
+            ),
+            ephemeral=True
+        )
+        return
+
+    team["owner_id"] = user.id
+
+    data["teams"][team_id] = team
+
+    await save_teams(data)
+
+    await refresh_team_board(
+        interaction.guild
+    )
+
+    await interaction.response.send_message(
+        bold_msg(
+            f"تم تعيين {user.mention} رئيسًا لـ {role.mention}.",
+            "👑"
+        ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True,
+            roles=True
+        )
+    )
+    
+TEAM_OFFERS = {}
+
+
+class TeamOfferView(discord.ui.View):
+
+    def __init__(
+        self,
+        offer_id: str
+    ):
+        super().__init__(
+            timeout=None
+        )
+
+        self.offer_id = offer_id
+
+    @discord.ui.button(
+        label="رفض",
+        emoji="❌",
+        style=discord.ButtonStyle.danger,
+        custom_id="team_offer:reject"
+    )
+    async def reject_offer(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        offer = TEAM_OFFERS.get(
+            self.offer_id
+        )
+
+        if not offer:
+            await interaction.response.send_message(
+                bold_msg(
+                    "هذا العرض انتهت صلاحيته.",
+                    "⏰"
+                ),
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.id != offer["player_id"]:
+            await interaction.response.send_message(
+                bold_msg(
+                    "هذا العرض ليس موجهًا لك.",
+                    "🔒"
+                ),
+                ephemeral=True
+            )
+            return
+
+        await finish_offer(
+            interaction,
+            self.offer_id,
+            "rejected"
+        )
+
+    @discord.ui.button(
+        label="قبول",
+        emoji="✅",
+        style=discord.ButtonStyle.success,
+        custom_id="team_offer:accept"
+    )
+    async def accept_offer(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        offer = TEAM_OFFERS.get(
+            self.offer_id
+        )
+
+        if not offer:
+            await interaction.response.send_message(
+                bold_msg(
+                    "هذا العرض انتهت صلاحيته.",
+                    "⏰"
+                ),
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.id != offer["player_id"]:
+            await interaction.response.send_message(
+                bold_msg(
+                    "هذا العرض ليس موجهًا لك.",
+                    "🔒"
+                ),
+                ephemeral=True
+            )
+            return
+
+        guild = interaction.guild
+
+        if guild is None:
+            guild = bot.get_guild(
+                offer["guild_id"]
+            )
+
+        if guild is None:
+            await interaction.response.send_message(
+                bold_msg(
+                    "تعذر العثور على السيرفر.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
+
+        data = await load_teams()
+
+        team = data.get(
+            "teams",
+            {}
+        ).get(
+            str(offer["team_id"])
+        )
+
+        if not team:
+            await interaction.response.send_message(
+                bold_msg(
+                    "النادي لم يعد مسجلًا.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
+
+        if team_is_timed_out(
+            str(offer["team_id"])
+        ):
+            await interaction.response.send_message(
+                bold_msg(
+                    "هذا النادي في Team Timeout حاليًا.",
+                    "⛔"
+                ),
+                ephemeral=True
+            )
+            return
+
+        role = guild.get_role(
+            int(team["role_id"])
+        )
+
+        if not role:
+            await interaction.response.send_message(
+                bold_msg(
+                    "رتبة النادي غير موجودة.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
+
+        if get_team_player_count(
+            guild,
+            role.id
+        ) >= TEAM_MAX_PLAYERS:
+            await interaction.response.send_message(
+                bold_msg(
+                    "النادي وصل للحد الأقصى وهو 25 لاعب.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
+
+        # Remove previous team role if the player has one.
+        player = guild.get_member(
+            interaction.user.id
+        )
+
+        if player is None:
+            await interaction.response.send_message(
+                bold_msg(
+                    "تعذر العثور عليك داخل السيرفر.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
+
+        old_team_id, old_team = get_member_team(
+            data,
+            player
+        )
+
+        if old_team:
+            old_role = guild.get_role(
+                int(old_team["role_id"])
+            )
+
+            if old_role and old_role in player.roles:
+                try:
+                    await player.remove_roles(
+                        old_role,
+                        reason="قبول عرض نادي جديد"
+                    )
+                except discord.Forbidden:
+                    await interaction.response.send_message(
+                        bold_msg(
+                            "لا أستطيع إزالة رتبة النادي القديم.",
+                            "❌"
+                        ),
+                        ephemeral=True
+                    )
+                    return
+
+        try:
+            await player.add_roles(
+                role,
+                reason="قبول عرض نادي"
+            )
+        except discord.Forbidden:
+            await interaction.response.send_message(
+                bold_msg(
+                    "لا أستطيع إعطاء رتبة النادي.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="✅ تم قبول العرض",
+                description=(
+                    f"تم قبول عرض نادي {role.mention}.\n\n"
+                    f"🏆 الفريق: {role.mention}"
+                ),
+                color=discord.Color.green()
+            ),
+            view=None
+        )
+
+        offer = TEAM_OFFERS.pop(
+            self.offer_id
+        )
+
+        await refresh_team_board(
+            guild
+        )
+
+        sender = guild.get_member(
+            offer["sender_id"]
+        )
+
+        if sender:
+            try:
+                await sender.send(
+                    bold_msg(
+                        f"اللاعب {player.mention} قبل عرض "
+                        f"{role.mention}.",
+                        "✅"
+                    ),
+                    allowed_mentions=discord.AllowedMentions(
+                        users=True,
+                        roles=True
+                    )
+                )
+            except Exception:
+                pass
+
+                async def finish_offer(
+    interaction: discord.Interaction,
+    offer_id: str,
+    result: str
+):
+    offer = TEAM_OFFERS.pop(
+        offer_id,
+        None
+    )
+
+    if not offer:
+        await interaction.response.send_message(
+            bold_msg(
+                "العرض انتهت صلاحيته.",
+                "⏰"
+            ),
+            ephemeral=True
+        )
+        return
+
+    guild = bot.get_guild(
+        offer["guild_id"]
+    )
+
+    team = None
+
+    if guild:
+        data = await load_teams()
+
+        team = data.get(
+            "teams",
+            {}
+        ).get(
+            str(offer["team_id"])
+        )
+
+    role = None
+
+    if guild and team:
+        role = guild.get_role(
+            int(team["role_id"])
+        )
+
+    if result == "rejected":
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="❌ تم رفض العرض",
+                description=(
+                    f"تم رفض عرض "
+                    f"{role.mention if role else 'النادي'}."
+                ),
+                color=discord.Color.red()
+            ),
+            view=None
+        )
+
+        if guild:
+            sender = guild.get_member(
+                offer["sender_id"]
+            )
+
+            if sender:
+                try:
+                    await sender.send(
+                        bold_msg(
+                            f"اللاعب رفض عرض "
+                            f"{role.mention if role else 'النادي'}.",
+                            "❌"
+                        ),
+                        allowed_mentions=discord.AllowedMentions(
+                            roles=True
+                        )
+                    )
+                except Exception:
+                    pass
+
+                     @bot.tree.command(
+    name="offer",
+    description="إرسال عرض للاعب"
+)
+@app_commands.describe(
+    user="اللاعب الذي تريد تقديم العرض له"
+)
+async def offer(
+    interaction: discord.Interaction,
+    user: discord.Member
+):
+    data = await load_teams()
+
+    team_id, team = get_member_team(
+        data,
+        interaction.user
+    )
+
+    if not team:
+        await interaction.response.send_message(
+            bold_msg(
+                "يجب أن تكون لديك رتبة نادي أولًا.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    if not member_has_role(
+        interaction.user,
+        TEAM_OWNER_ROLE_ID
+    ):
+        await interaction.response.send_message(
+            bold_msg(
+                "يجب أن تكون لديك رتبة Team Owner لاستخدام هذا الأمر.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
+
+    if user.bot:
+        await interaction.response.send_message(
+            bold_msg(
+                "لا يمكنك إرسال عرض إلى بوت.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    if user.id == interaction.user.id:
+        await interaction.response.send_message(
+            bold_msg(
+                "لا يمكنك إرسال عرض لنفسك.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    if team_is_timed_out(
+        str(team_id)
+    ):
+        await interaction.response.send_message(
+            bold_msg(
+                "فريقك في Team Timeout ولا يمكنك تقديم عروض حاليًا.",
+                "⛔"
+            ),
+            ephemeral=True
+        )
+        return
+
+    role = interaction.guild.get_role(
+        int(team["role_id"])
+    )
+
+    if not role:
+        await interaction.response.send_message(
+            bold_msg(
+                "رتبة النادي غير موجودة.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    if get_team_player_count(
+        interaction.guild,
+        role.id
+    ) >= TEAM_MAX_PLAYERS:
+        await interaction.response.send_message(
+            bold_msg(
+                "النادي وصل للحد الأقصى: 25 لاعب.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Don't offer to a player who already has this team.
+    if role in user.roles:
+        await interaction.response.send_message(
+            bold_msg(
+                "هذا اللاعب موجود بالفعل في ناديك.",
+                "⚠️"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Only one active offer to the same player from the same team.
+    for existing in TEAM_OFFERS.values():
+        if (
+            existing["player_id"] == user.id
+            and existing["team_id"] == int(team_id)
+        ):
+            await interaction.response.send_message(
+                bold_msg(
+                    "يوجد عرض مفتوح بالفعل لهذا اللاعب.",
+                    "⚠️"
+                ),
+                ephemeral=True
+            )
+            return
+
+    offer_id = (
+        f"{interaction.guild.id}-"
+        f"{interaction.user.id}-"
+        f"{user.id}-"
+        f"{int(datetime.datetime.now().timestamp())}"
+    )
+
+    expires_at = (
+        datetime.datetime.now()
+        + TEAM_OFFER_DURATION
+    )
+
+    TEAM_OFFERS[offer_id] = {
+        "guild_id": interaction.guild.id,
+        "team_id": int(team_id),
+        "sender_id": interaction.user.id,
+        "player_id": user.id,
+        "created_at": datetime.datetime.now().isoformat(),
+        "expires_at": expires_at.isoformat()
+    }
+
+    embed = discord.Embed(
+        title="📩 عرض انضمام إلى نادي",
+        description=(
+            f"**أرسل لك:** {interaction.user.mention}\n"
+            f"**الفريق:** {role.mention}\n\n"
+            "هل تريد قبول العرض؟\n\n"
+            "⏰ لديك **7 ساعات** للرد."
+        ),
+        color=pink_color()
+    )
+
+    embed.set_thumbnail(
+        url=team.get(
+            "image_url",
+            TOUCHLINE_IMAGE_URL
+        )
+    )
+
+    try:
+        await user.send(
+            embed=embed,
+            view=TeamOfferView(
+                offer_id
+            )
+        )
+    except discord.Forbidden:
+        TEAM_OFFERS.pop(
+            offer_id,
+            None
+        )
+
+        await interaction.response.send_message(
+            bold_msg(
+                "لا أستطيع إرسال رسالة خاصة لهذا اللاعب.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    await interaction.response.send_message(
+        bold_msg(
+            f"تم إرسال العرض إلى {user.mention}.",
+            "✅"
+        ),
+        ephemeral=True,
+        allowed_mentions=discord.AllowedMentions(
+            users=True
+        )
+    )
+    TEAM_DEMANDS = {}
+
+
+class TeamDemandView(discord.ui.View):
+
+    def __init__(
+        self,
+        demand_id: str
+    ):
+        super().__init__(
+            timeout=None
+        )
+
+        self.demand_id = demand_id
+
+    @discord.ui.button(
+        label="قبول",
+        emoji="✅",
+        style=discord.ButtonStyle.success,
+        custom_id="team_demand:accept"
+    )
+    async def accept_demand(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button
+    ):
+        demand = TEAM_DEMANDS.get(
+            self.demand_id
+        )
+
+        if not demand:
+            await interaction.response.send_message(
+                bold_msg(
+                    "طلب المغادرة انتهت صلاحيته.",
+                    "⏰"
+                ),
+                ephemeral=True
+            )
+            return
+
+        if interaction.user.id != demand["owner_id"]:
+            await interaction.response.send_message(
+                bold_msg(
+                    "هذا الطلب موجه لرئيس النادي فقط.",
+                    "🔒"
+                ),
+                ephemeral=True
+            )
+            return
+
+        guild = bot.get_guild(
+            demand["guild_id"]
+        )
+
+        if not guild:
+            return
+
+        player = guild.get_member(
+            demand["player_id"]
+        )
+
+        role = guild.get_role(
+            demand["role_id"]
+        )
+
+        if player and role:
+            try:
+                await player.remove_roles(
+                    role,
+                    reason="تم قبول طلب مغادرة النادي"
+                )
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    bold_msg(
+                        "لا أستطيع إزالة رتبة النادي من اللاعب.",
+                        "❌"
+                    ),
+                    ephemeral=True
+                )
+                return
+
+        TEAM_DEMANDS.pop(
+            self.demand_id,
+            None
+        )
+
+        await interaction.response.edit_message(
+            embed=discord.Embed(
+                title="✅ تمت الموافقة",
+                description=(
+                    f"تمت الموافقة على طلب "
+                    f"{player.mention if player else 'اللاعب'} "
+                    "ومغادرته للنادي."
+                ),
+                color=discord.Color.green()
+            ),
+            view=None
+        )
+
+        await refresh_team_board(
+            guild
+        )
+
+        if player:
+            try:
+                await player.send(
+                    bold_msg(
+                        "تمت الموافقة على طلب مغادرتك للنادي.",
+                        "✅"
+                    )
+                )
+            except Exception:
+                pass
+                @bot.tree.command(
+    name="demand",
+    description="طلب الخروج من النادي"
+)
+async def demand(
+    interaction: discord.Interaction
+):
+    data = await load_teams()
+
+    team_id, team = get_member_team(
+        data,
+        interaction.user
+    )
+
+    if not team:
+        await interaction.response.send_message(
+            bold_msg(
+                "أنت لست في أي نادي.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    role = interaction.guild.get_role(
+        int(team["role_id"])
+    )
+
+    if not role:
+        await interaction.response.send_message(
+            bold_msg(
+                "رتبة النادي غير موجودة.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    owner_id = team.get(
+        "owner_id"
+    )
+
+    if not owner_id:
+        await interaction.response.send_message(
+            bold_msg(
+                "هذا النادي لا يوجد له رئيس حاليًا.",
+                "⚠️"
+            ),
+            ephemeral=True
+        )
+        return
+
+    owner = interaction.guild.get_member(
+        int(owner_id)
+    )
+
+    if not owner:
+        await interaction.response.send_message(
+            bold_msg(
+                "رئيس النادي غير موجود في السيرفر. "
+                "سيتم التعامل مع الطلب تلقائيًا خلال 5 ساعات.",
+                "⚠️"
+            ),
+            ephemeral=True
+        )
+
+    demand_id = (
+        f"{interaction.guild.id}-"
+        f"{interaction.user.id}-"
+        f"{int(datetime.datetime.now().timestamp())}"
+    )
+
+    TEAM_DEMANDS[demand_id] = {
+        "guild_id": interaction.guild.id,
+        "player_id": interaction.user.id,
+        "owner_id": int(owner_id),
+        "role_id": role.id,
+        "created_at": datetime.datetime.now().isoformat(),
+        "expires_at": (
+            datetime.datetime.now()
+            + TEAM_DEMAND_DURATION
+        ).isoformat()
+    }
+
+    embed = discord.Embed(
+        title="📤 طلب مغادرة النادي",
+        description=(
+            f"**اللاعب:** {interaction.user.mention}\n"
+            f"**النادي:** {role.mention}\n\n"
+            "اللاعب يريد مغادرة النادي.\n\n"
+            "يستطيع رئيس النادي قبول الطلب فقط.\n"
+            "إذا لم يتم التعامل معه خلال **5 ساعات**، "
+            "ستتم إزالة رتبة النادي تلقائيًا."
+        ),
+        color=pink_color()
+    )
+
+    if owner:
+        try:
+            await owner.send(
+                embed=embed,
+                view=TeamDemandView(
+                    demand_id
+                )
+            )
+        except discord.Forbidden:
+            pass
+
+    await interaction.response.send_message(
+        bold_msg(
+            "تم إرسال طلب مغادرة النادي إلى رئيس الفريق.",
+            "📤"
+        ),
+        ephemeral=True
+    )
+    @bot.tree.command(
+    name="release",
+    description="فسخ عقد لاعب من النادي"
+)
+@app_commands.describe(
+    user="اللاعب الذي تريد فسخ عقده"
+)
+async def release(
+    interaction: discord.Interaction,
+    user: discord.Member
+):
+    data = await load_teams()
+
+    team_id, team = get_member_team(
+        data,
+        interaction.user
+    )
+
+    if not team:
+        await interaction.response.send_message(
+            bold_msg(
+                "يجب أن تكون في نادي لاستخدام هذا الأمر.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Must have Team Owner role.
+    if not member_has_role(
+        interaction.user,
+        TEAM_OWNER_ROLE_ID
+    ):
+        await interaction.response.send_message(
+            bold_msg(
+                "هذا الأمر مخصص لرئيس/Team Owner النادي.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
+
+    # Make sure this user is the appointed owner.
+    if team.get("owner_id") != interaction.user.id:
+        await interaction.response.send_message(
+            bold_msg(
+                "أنت لست الرئيس المعين لهذا النادي.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
+
+    role = interaction.guild.get_role(
+        int(team["role_id"])
+    )
+
+    if not role:
+        await interaction.response.send_message(
+            bold_msg(
+                "رتبة النادي غير موجودة.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    if role not in user.roles:
+        await interaction.response.send_message(
+            bold_msg(
+                "هذا اللاعب ليس في ناديك.",
+                "⚠️"
+            ),
+            ephemeral=True
+        )
+        return
+
+    try:
+        await user.remove_roles(
+            role,
+            reason=(
+                f"فسخ عقد بواسطة "
+                f"{interaction.user}"
+            )
+        )
+    except discord.Forbidden:
+        await interaction.response.send_message(
+            bold_msg(
+                "لا أستطيع إزالة رتبة النادي من اللاعب.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
+
+    await refresh_team_board(
+        interaction.guild
+    )
+
+    await interaction.response.send_message(
+        bold_msg(
+            f"تم فسخ عقد {user.mention} وإزالة رتبة النادي.",
+            "📤"
+        ),
+        allowed_mentions=discord.AllowedMentions(
+            users=True
+        )
+    )
+
+    try:
+        await user.send(
+            bold_msg(
+                f"تم فسخ عقدك مع نادي {role.name}.",
+                "📤"
+            )
+        )
+    except Exception:
+        pass
+
+@tasks.loop(minutes=1)
+async def team_sign_expiry_checker():
+
+    now = datetime.datetime.now()
+
+    # --------------------------------------------------------------------------
+    # OFFERS
+    # --------------------------------------------------------------------------
+
+    expired_offers = []
+
+    for offer_id, offer in list(
+        TEAM_OFFERS.items()
+    ):
+        try:
+            expires_at = datetime.datetime.fromisoformat(
+                offer["expires_at"]
+            )
+
+            if now >= expires_at:
+                expired_offers.append(
+                    offer_id
+                )
+
+        except Exception:
+            expired_offers.append(
+                offer_id
+            )
+
+    for offer_id in expired_offers:
+
+        offer = TEAM_OFFERS.pop(
+            offer_id,
+            None
+        )
+
+        if not offer:
+            continue
+
+        guild = bot.get_guild(
+            offer["guild_id"]
+        )
+
+        if not guild:
+            continue
+
+        sender = guild.get_member(
+            offer["sender_id"]
+        )
+
+        player = guild.get_member(
+            offer["player_id"]
+        )
+
+        data = await load_teams()
+
+        team = data.get(
+            "teams",
+            {}
+        ).get(
+            str(offer["team_id"])
+        )
+
+        team_role = None
+
+        if team:
+            team_role = guild.get_role(
+                int(team["role_id"])
+            )
+
+        if player:
+            try:
+                await player.send(
+                    bold_msg(
+                        "انتهت مدة العرض ولم يتم الرد عليه، "
+                        "لذلك تم رفضه تلقائيًا.",
+                        "⏰"
+                    )
+                )
+            except Exception:
+                pass
+
+        if sender:
+            try:
+                await sender.send(
+                    bold_msg(
+                        f"اللاعب {player.display_name if player else 'اللاعب'} "
+                        f"لم يرد على عرض "
+                        f"{team_role.mention if team_role else 'النادي'} "
+                        "خلال 7 ساعات.",
+                        "⏰"
+                    ),
+                    allowed_mentions=discord.AllowedMentions(
+                        roles=True
+                    )
+                )
+            except Exception:
+                pass
+
+    # --------------------------------------------------------------------------
+    # DEMANDS
+    # --------------------------------------------------------------------------
+
+    expired_demands = []
+
+    for demand_id, demand_data in list(
+        TEAM_DEMANDS.items()
+    ):
+        try:
+            expires_at = datetime.datetime.fromisoformat(
+                demand_data["expires_at"]
+            )
+
+            if now >= expires_at:
+                expired_demands.append(
+                    demand_id
+                )
+
+        except Exception:
+            expired_demands.append(
+                demand_id
+            )
+
+    for demand_id in expired_demands:
+
+        demand_data = TEAM_DEMANDS.pop(
+            demand_id,
+            None
+        )
+
+        if not demand_data:
+            continue
+
+        guild = bot.get_guild(
+            demand_data["guild_id"]
+        )
+
+        if not guild:
+            continue
+
+        player = guild.get_member(
+            demand_data["player_id"]
+        )
+
+        role = guild.get_role(
+            demand_data["role_id"]
+        )
+
+        if player and role and role in player.roles:
+            try:
+                await player.remove_roles(
+                    role,
+                    reason="انتهاء مهلة طلب مغادرة النادي"
+                )
+            except discord.Forbidden:
+                pass
+
+        if player:
+            try:
+                await player.send(
+                    bold_msg(
+                        "انتهت مدة طلب مغادرة النادي "
+                        "ولم يتم الرد عليه، لذلك تمت إزالة رتبة النادي تلقائيًا.",
+                        "⏰"
+                    )
+                )
+            except Exception:
+                pass
+
+        await refresh_team_board(
+            guild
+        )
+
+
+@team_sign_expiry_checker.before_loop
+async def before_team_sign_expiry_checker():
+    await bot.wait_until_ready()
+    
 # ==============================================================================
 # TICKET SLASH COMMANDS (NEW)
 # ==============================================================================
@@ -1603,7 +3546,8 @@ async def set_ticket_channel(interaction: discord.Interaction, channel: discord.
                 "يمكنك فتح تذكرة للحصول على:\n"
                 "• **دعم فني** 🟨\n"
                 "• **توثيق نادي** 🟩\n"
-                "• **تقديم شكوى** 🟥\n\n"
+                "• **تقديم شكوى** 🟥\n"
+                "• **تقديم الإدارة** 👮\n\n"
                 "**📋 قواعد التذاكر:**\n"
                 "• اختر النوع المناسب لطلبك\n"
                 "• اشرح طلبك بشكل واضح\n"
@@ -1675,7 +3619,36 @@ async def on_ready():
         print("Synced all slash commands successfully.")
     except Exception as e:
         print(f"Sync error: {e}")
+           if not team_sign_expiry_checker.is_running():
+        team_sign_expiry_checker.start()
 
+@bot.event
+async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
+    game = ACTIVE_WHO_AM_I.get(
+        payload.channel_id
+    )
+
+    if not game:
+        return
+
+    if game.message_id != payload.message_id:
+        return
+
+    game.finished = True
+
+    if game.guess_task:
+        game.guess_task.cancel()
+
+    ACTIVE_WHO_AM_I.pop(
+        payload.channel_id,
+        None
+    )
+
+    print(
+        f"Who Am I game cancelled because its message was deleted. "
+        f"Channel: {payload.channel_id}"
+    )
+    
 @bot.event
 async def on_message(message: discord.Message):
     """Keep Auto Replies while always allowing discord.py prefix commands to run.
@@ -2254,43 +4227,400 @@ WHO_AM_I = [
     ("ابن سينا", ["كنت طبيبًا وفيلسوفًا إسلاميًا.", "كتبت القانون في الطب.", "أحدثت ثورة في العلوم الطبية.", "اشتهرت في أوروبا باسم Avicenna.", "عشت في القرن الحادي عشر الميلادي."]),
     ("محمد علي كلاي", ["كنت ملاكمًا أمريكيًا أسطورياً.", "حملت لقب بطل العالم للوزن الثقيل.", "اشتهرت بجملة 'أنا الأعظم'.", "دافعت عن مبادئي وتحملت تبعاتها.", "أُعتبر من أعظم الرياضيين في التاريخ."]),
 ]
+ACTIVE_WHO_AM_I = {}
+WHO_AM_I_LAST_PLAYED = {}
+WHO_AM_I_COOLDOWN = datetime.timedelta(minutes=5)
 
 class WhoAmIView(discord.ui.View):
-    def __init__(self, author_id, answer, clues):
-        super().__init__(timeout=90)
+    def __init__(
+        self,
+        game,
+        author_id: int
+    ):
+        super().__init__(timeout=300)
+
+        self.game = game
         self.author_id = author_id
-        self.answer = answer
-        self.clues = clues
-        self.index = 0
 
-    async def interaction_check(self, interaction):
-        return True
+        self.hint_button = discord.ui.Button(
+            label="تلميح",
+            emoji="💡",
+            style=discord.ButtonStyle.primary
+        )
 
-    @discord.ui.button(label="تلميح", emoji="💡", style=discord.ButtonStyle.primary)
-    async def clue(self, interaction, button):
-        if self.index >= len(self.clues):
-            await interaction.response.send_message(bold_msg("استخدمت كل التلميحات.", "💡"), ephemeral=True)
+        self.reveal_button = discord.ui.Button(
+            label="كشف الإجابة",
+            emoji="✅",
+            style=discord.ButtonStyle.success,
+            disabled=True
+        )
+
+        self.hint_button.callback = self.give_hint
+        self.reveal_button.callback = self.reveal_answer
+
+        self.add_item(self.hint_button)
+        self.add_item(self.reveal_button)
+
+    async def give_hint(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                bold_msg(
+                    "فقط الشخص الذي بدأ اللعبة يستطيع استخدام التلميحات.",
+                    "🔒"
+                ),
+                ephemeral=True
+            )
             return
-        await interaction.response.send_message(bold_msg(f"التلميح {self.index + 1}: {self.clues[self.index]}", "💡"), ephemeral=True)
-        self.index += 1
 
-    @discord.ui.button(label="الحل", emoji="✅", style=discord.ButtonStyle.success)
-    async def answer_button(self, interaction, button):
-        await interaction.response.send_message(bold_msg(f"الإجابة هي: {self.answer}", "🎯"), ephemeral=True)
-        self.stop()
+        if self.game.finished:
+            await interaction.response.send_message(
+                bold_msg("انتهت اللعبة بالفعل.", "⚠️"),
+                ephemeral=True
+            )
+            return
 
+        if self.game.hints_used >= len(self.game.clues):
+            await interaction.response.send_message(
+                bold_msg(
+                    "تم استخدام جميع التلميحات.",
+                    "💡"
+                ),
+                ephemeral=True
+            )
+            return
+
+        clue = self.game.clues[self.game.hints_used]
+        self.game.hints_used += 1
+
+        self.game.hint_lines.append(
+            f"💡 **التلميح {self.game.hints_used}:** {clue}"
+        )
+
+        # Make reveal available only after 3 hints.
+        if self.game.hints_used >= 3:
+            self.reveal_button.disabled = False
+
+        # Disable hint button after all hints.
+        if self.game.hints_used >= len(self.game.clues):
+            self.hint_button.disabled = True
+
+        embed = self.game.build_embed()
+
+        await interaction.response.edit_message(
+            embed=embed,
+            view=self
+        )
+
+    async def reveal_answer(self, interaction: discord.Interaction):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message(
+                bold_msg(
+                    "فقط الشخص الذي بدأ اللعبة يستطيع كشف الإجابة.",
+                    "🔒"
+                ),
+                ephemeral=True
+            )
+            return
+
+        if self.game.finished:
+            await interaction.response.send_message(
+                bold_msg("انتهت اللعبة بالفعل.", "⚠️"),
+                ephemeral=True
+            )
+            return
+
+        if self.game.hints_used < 3:
+            await interaction.response.send_message(
+                bold_msg(
+                    "يجب استخدام 3 تلميحات أولًا قبل كشف الإجابة.",
+                    "⚠️"
+                ),
+                ephemeral=True
+            )
+            return
+
+        self.game.finished = True
+
+        await self.game.finish(
+            winner_name=None,
+            reveal=True
+        )
+
+    async def on_timeout(self):
+        if not self.game.finished:
+            await self.game.finish(
+                winner_name=None,
+                timeout=True
+            )
+       class WhoAmIGame:
+    def __init__(
+        self,
+        ctx,
+        answer,
+        clues,
+        starter_id
+    ):
+        self.ctx = ctx
+        self.channel_id = ctx.channel.id
+        self.answer = answer
+        self.clues = list(clues)
+        random.shuffle(self.clues)
+
+        self.starter_id = starter_id
+        self.hints_used = 0
+        self.hint_lines = []
+        self.finished = False
+        self.message = None
+        self.message_id = None
+        self.guess_task = None
+
+    def build_embed(self):
+        if self.finished:
+            return discord.Embed(
+                title="❓ من أنا؟",
+                description=(
+                    "\n".join(self.hint_lines)
+                    if self.hint_lines
+                    else "انتهت اللعبة."
+                ),
+                color=pink_color()
+            )
+
+        description = (
+            "**__ خمن الشخصية من التلميحات. "
+            "اكتب اسم الشخصية في الشات. __**\n\n"
+        )
+
+        if self.hint_lines:
+            description += "\n".join(self.hint_lines)
+        else:
+            description += (
+                "💡 التلميحات لم تبدأ بعد.\n"
+                "🔒 كشف الإجابة متاح بعد 3 تلميحات."
+            )
+
+        return discord.Embed(
+            title="❓ من أنا؟",
+            description=description,
+            color=pink_color()
+        )
+
+    async def start(self):
+        view = WhoAmIView(
+            self,
+            self.starter_id
+        )
+
+        self.message = await self.ctx.send(
+            embed=self.build_embed(),
+            view=view
+        )
+
+        self.message_id = self.message.id
+
+        ACTIVE_WHO_AM_I[self.channel_id] = self
+
+        self.guess_task = asyncio.create_task(
+            self.wait_for_guesses()
+        )
+
+    async def wait_for_guesses(self):
+        def check(message: discord.Message):
+            return (
+                not message.author.bot
+                and message.channel.id == self.channel_id
+                and not self.finished
+            )
+
+        try:
+            while not self.finished:
+                message = await bot.wait_for(
+                    "message",
+                    timeout=300,
+                    check=check
+                )
+
+                guess = clean_arabic_text(
+                    message.content
+                ).strip()
+
+                answer = clean_arabic_text(
+                    self.answer
+                ).strip()
+
+                if guess == answer:
+                    await message.channel.send(
+                        bold_msg(
+                            f"إجابة صحيحة! 🎉 {message.author.mention} عرف الشخصية: **{self.answer}**",
+                            "✅"
+                        ),
+                        allowed_mentions=discord.AllowedMentions(
+                            users=True
+                        )
+                    )
+
+                    await self.finish(
+                        winner_name=message.author.display_name
+                    )
+
+                else:
+                    await message.channel.send(
+                        bold_msg(
+                            f"{message.author.mention}، إجابتك غير صحيحة.",
+                            "❌"
+                        ),
+                        allowed_mentions=discord.AllowedMentions(
+                            users=True
+                        )
+                    )
+
+        except asyncio.TimeoutError:
+            if not self.finished:
+                await self.finish(
+                    timeout=True
+                )
+
+        except asyncio.CancelledError:
+            return
+
+    async def finish(
+        self,
+        winner_name=None,
+        reveal=False,
+        timeout=False
+    ):
+        if self.finished and not reveal:
+            return
+
+        self.finished = True
+
+        if self.guess_task:
+            current = asyncio.current_task()
+
+            if self.guess_task is not current:
+                self.guess_task.cancel()
+
+        if self.channel_id in ACTIVE_WHO_AM_I:
+            ACTIVE_WHO_AM_I.pop(
+                self.channel_id,
+                None
+            )
+
+        description = ""
+
+        if self.hint_lines:
+            description += (
+                "\n".join(self.hint_lines)
+                + "\n\n"
+            )
+
+        if winner_name:
+            description += (
+                f"🎉 **الفائز: {winner_name}**\n"
+                f"الإجابة كانت: **{self.answer}**"
+            )
+
+        elif reveal:
+            description += (
+                f"✅ **الإجابة هي: {self.answer}**"
+            )
+
+        elif timeout:
+            description += (
+                f"⏰ انتهى وقت اللعبة.\n"
+                f"الإجابة كانت: **{self.answer}**"
+            )
+
+        else:
+            description += (
+                f"اللعبة انتهت.\n"
+                f"الإجابة كانت: **{self.answer}**"
+            )
+
+        embed = discord.Embed(
+            title="❓ من أنا؟ • انتهت اللعبة",
+            description=description,
+            color=pink_color()
+        )
+
+        try:
+            if self.message:
+                for item in self.message.components:
+                    pass
+
+                await self.message.edit(
+                    embed=embed,
+                    view=None
+                )
+        except discord.NotFound:
+            pass
+        except Exception as e:
+            print(
+                f"Error finishing Who Am I game: {e}"
+            )
+            
 @bot.command(name="من_انا")
 async def who_am_i(ctx):
-    answer, clues = random.choice(WHO_AM_I)
-    random.shuffle(clues)
-    embed = discord.Embed(
-        title="❓ من أنا؟",
-        description="**__ خمن الشخصية من 5 تلميحات. اكتب إجابتك في الشات أو اطلب التلميحات بالزر. __**",
-        color=pink_color()
-    )
-    embed.add_field(name="💡 التلميحات", value="التلميحات تظهر بالترتيب عبر زر التلميح.", inline=False)
-    await ctx.send(embed=embed, view=WhoAmIView(ctx.author.id, answer, clues))
+    channel_id = ctx.channel.id
+    now = datetime.datetime.now()
 
+    # Don't allow a second active game in the same channel.
+    if channel_id in ACTIVE_WHO_AM_I:
+        active_game = ACTIVE_WHO_AM_I[channel_id]
+
+        if not active_game.finished:
+            await ctx.send(
+                bold_msg(
+                    "هناك لعبة من أنا قيد التشغيل بالفعل في هذا الروم. ⏳",
+                    "⚠️"
+                )
+            )
+            return
+
+        ACTIVE_WHO_AM_I.pop(
+            channel_id,
+            None
+        )
+
+    # Five-minute cooldown between games.
+    last_played = WHO_AM_I_LAST_PLAYED.get(
+        channel_id
+    )
+
+    if last_played:
+        remaining = (
+            WHO_AM_I_COOLDOWN
+            - (now - last_played)
+        ).total_seconds()
+
+        if remaining > 0:
+            minutes = int(remaining // 60)
+            seconds = int(remaining % 60)
+
+            await ctx.send(
+                bold_msg(
+                    f"يمكن تشغيل لعبة من أنا مرة أخرى بعد "
+                    f"`{minutes}m {seconds}s`.",
+                    "⏳"
+                )
+            )
+            return
+
+    WHO_AM_I_LAST_PLAYED[channel_id] = now
+
+    answer, original_clues = random.choice(
+        WHO_AM_I
+    )
+
+    game = WhoAmIGame(
+        ctx=ctx,
+        answer=answer,
+        clues=original_clues,
+        starter_id=ctx.author.id
+    )
+
+    await game.start()
+    
 # ==============================================================================
 # Arabic Wordle
 # ==============================================================================
