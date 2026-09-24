@@ -1965,7 +1965,7 @@ class TicketCloseConfirmView(discord.ui.View):
                         print(f"Error sending transcript: {e}")
             
             # Remove from open tickets
-            if str(interaction.channel_id) in open_tickets:
+        if str(interaction.channel_id) in open_tickets:
                 del open_tickets[str(interaction.channel_id)]
                 tickets["open_tickets"] = open_tickets
                 await save_tickets(tickets)
