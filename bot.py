@@ -4347,7 +4347,7 @@ class WhoAmIView(discord.ui.View):
                 winner_name=None,
                 timeout=True
             )
-       class WhoAmIGame:
+        class WhoAmIGame:
            def __init__(
            self,
            ctx,
