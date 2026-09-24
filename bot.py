@@ -1982,22 +1982,22 @@ class TicketCloseConfirmView(discord.ui.View):
 
                 await asyncio.sleep(10)
 
-            try:
+        try:
                 await channel.delete(
                     reason=f"تم حذف التذكرة بواسطة {interaction.user.name}"
                 )
-            except Exception:
+        except Exception:
                 pass
             
-            except Exception as e:
+        except Exception as e:
             print(f"Error deleting ticket: {e}")
             traceback.print_exc()
-            try:
+        try:
                 await interaction.response.send_message(
                     bold_msg(f"حدث خطأ: {str(e)}", "❌"),
                     ephemeral=True
                 )
-            except:
+        except:
                 pass
 
 # ==============================================================================
