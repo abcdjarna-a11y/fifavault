@@ -2800,71 +2800,71 @@ class TeamOfferView(discord.ui.View):
     @app_commands.describe(
         user="اللاعب الذي تريد تقديم العرض له"
 )
-async def offer(
-    interaction: discord.Interaction,
-    user: discord.Member
-):
-    data = await load_teams()
+    async def offer(
+        interaction: discord.Interaction,
+        user: discord.Member
+    ):
+        data = await load_teams()
 
-    team_id, team = get_member_team(
-        data,
-        interaction.user
+        team_id, team = get_member_team(
+            data,
+            interaction.user
     )
 
-    if not team:
-        await interaction.response.send_message(
-            bold_msg(
-                "يجب أن تكون لديك رتبة نادي أولًا.",
-                "❌"
-            ),
-            ephemeral=True
-        )
-        return
+        if not team:
+            await interaction.response.send_message(
+                bold_msg(
+                    "يجب أن تكون لديك رتبة نادي أولًا.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
 
-    if not member_has_role(
-        interaction.user,
-        TEAM_OWNER_ROLE_ID
-    ):
-        await interaction.response.send_message(
-            bold_msg(
-                "يجب أن تكون لديك رتبة Team Owner لاستخدام هذا الأمر.",
-                "🔒"
-            ),
-            ephemeral=True
-        )
-        return
+        if not member_has_role(
+            interaction.user,
+            TEAM_OWNER_ROLE_ID
+        ):
+            await interaction.response.send_message(
+                bold_msg(
+                    "يجب أن تكون لديك رتبة Team Owner لاستخدام هذا الأمر.",
+                    "🔒"
+                ),
+                ephemeral=True
+            )
+            return
 
-    if user.bot:
-        await interaction.response.send_message(
-            bold_msg(
-                "لا يمكنك إرسال عرض إلى بوت.",
-                "❌"
-            ),
-            ephemeral=True
-        )
-        return
+        if user.bot:
+            await interaction.response.send_message(
+                bold_msg(
+                    "لا يمكنك إرسال عرض إلى بوت.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
 
-    if user.id == interaction.user.id:
-        await interaction.response.send_message(
-            bold_msg(
-                "لا يمكنك إرسال عرض لنفسك.",
-                "❌"
-            ),
-            ephemeral=True
-        )
-        return
+        if user.id == interaction.user.id:
+            await interaction.response.send_message(
+                bold_msg(
+                    "لا يمكنك إرسال عرض لنفسك.",
+                    "❌"
+                ),
+                ephemeral=True
+            )
+            return
 
-    if team_is_timed_out(
-        str(team_id)
-    ):
-        await interaction.response.send_message(
-            bold_msg(
-                "فريقك في Team Timeout ولا يمكنك تقديم عروض حاليًا.",
-                "⛔"
-            ),
-            ephemeral=True
-        )
-        return
+        if team_is_timed_out(
+            str(team_id)
+        ):
+            await interaction.response.send_message(
+                bold_msg(
+                   "فريقك في Team Timeout ولا يمكنك تقديم عروض حاليًا.",
+                   "⛔"
+                ),
+                ephemeral=True
+            )
+            return
 
     role = interaction.guild.get_role(
         int(team["role_id"])
