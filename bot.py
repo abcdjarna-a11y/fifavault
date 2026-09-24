@@ -1711,8 +1711,8 @@ async def finalize_ticket_close(
         view=TicketCloseConfirmView()
     ) 
 
-    class TicketCloseOtherReasonModal(discord.ui.Modal, title="سبب إغلاق التذكرة"):
-       reason = discord.ui.TextInput(
+class TicketCloseOtherReasonModal(discord.ui.Modal, title="سبب إغلاق التذكرة"):
+    reason = discord.ui.TextInput(
         label="اكتب سبب الإغلاق",
         placeholder="اكتب السبب هنا...",
         required=True,
@@ -1727,9 +1727,9 @@ async def finalize_ticket_close(
             self.reason.value.strip()
         )
 
-        class TicketCloseReasonSelect(discord.ui.Select):
-           def __init__(self, closer_id: int):
-              self.closer_id = closer_id
+class TicketCloseReasonSelect(discord.ui.Select):
+    def __init__(self, closer_id: int):
+        self.closer_id = closer_id
 
         options = [
             discord.SelectOption(
@@ -1776,7 +1776,6 @@ async def finalize_ticket_close(
             interaction,
             selected
         )
-
 
 class TicketCloseReasonView(discord.ui.View):
     def __init__(self, closer_id: int):
@@ -1905,73 +1904,71 @@ class TicketCloseConfirmView(discord.ui.View):
                     log_embed.add_field(name="التذكرة", value=channel.name, inline=True)
                     log_embed.add_field(name="تم الفتح بواسطة", value=f"<@{ticket_data.get('creator_id')}>", inline=True)
                     log_embed.add_field(name="تاريخ الفتح", value=ticket_data.get('created_at', 'N/A'), inline=True)
-                    log_embed.add_field(name="مستلم التكت", value=ticket_data.get("claimed_by_name", "لم يتم الاستلام"),inline=True
+                    log_embed.add_field(name="مستلم التكت", value=ticket_data.get("claimed_by_name", "لم يتم الاستلام"), inline=True)
+
+                    log_embed.add_field(
+                        name="وقت الاستلام",
+                        value=ticket_data.get("claimed_at", "N/A"),
+                        inline=True
                     )
-            log_embed.add_field(
-                name="وقت الاستلام",
-                value=ticket_data.get("claimed_at", "N/A"),
-                inline=True
-            )
 
-            log_embed.add_field(
-                name="تم الإغلاق بواسطة",
-                value=f"<@{ticket_data.get('closed_by_id', interaction.user.id)}>",
-                inline=True
-            )
+                    log_embed.add_field(
+                        name="تم الإغلاق بواسطة",
+                        value=f"<@{ticket_data.get('closed_by_id', interaction.user.id)}>",
+                        inline=True
+                    )
 
-            log_embed.add_field(
-                name="وقت الإغلاق",
-                value=ticket_data.get("closed_at", "N/A"),
-                inline=True
-            )
+                    log_embed.add_field(
+                        name="وقت الإغلاق",
+                        value=ticket_data.get("closed_at", "N/A"),
+                        inline=True
+                    )
 
-            takeover_events = [
-                e
-                for e in ticket_data.get("events", [])
-                if e.get("type") == "takeover"
-            ]
+                    takeover_events = [
+                        e
+                        for e in ticket_data.get("events", [])
+                        if e.get("type") == "takeover"
+                    ]
 
-            log_embed.add_field(
-                name="Owner Takeover",
-                value="نعم" if takeover_events else "لا",
-                inline=True
-            )
+                    log_embed.add_field(
+                        name="Owner Takeover",
+                        value="نعم" if takeover_events else "لا",
+                        inline=True
+                    )
 
-            if takeover_events:
-                latest_takeover = takeover_events[-1]
+                    if takeover_events:
+                        latest_takeover = takeover_events[-1]
 
-                log_embed.add_field(
-                    name="تفاصيل Owner Takeover",
-                    value=(
-                        f"{latest_takeover.get('from_user_name', 'لا أحد')} "
-                        f"→ "
-                        f"{latest_takeover.get('user_name', 'غير معروف')}\n"
-                        f"{latest_takeover.get('timestamp', 'N/A')}"
-                    ),
-                    inline=False
-                )
+                        log_embed.add_field(
+                            name="تفاصيل Owner Takeover",
+                            value=(
+                                f"{latest_takeover.get('from_user_name', 'لا أحد')} "
+                                f"→ "
+                                f"{latest_takeover.get('user_name', 'غير معروف')}\n"
+                                f"{latest_takeover.get('timestamp', 'N/A')}"
+                            ),
+                            inline=False
+                        )
 
-            log_embed.add_field(
-                name="سبب الإغلاق",
-                value=ticket_data.get("close_reason", "غير محدد"),
-                inline=False
-            )
-        except Exception as e:
-            print(f"حدث خطأ أثناء بناء log_embed: {e}")
-            
-        try:
+                    log_embed.add_field(
+                        name="سبب الإغلاق",
+                        value=ticket_data.get("close_reason", "غير محدد"),
+                        inline=False
+                    )
+
+                    try:
                         await transcript_channel.send(embed=log_embed, file=transcript_file)
-        except Exception as e:
+                    except Exception as e:
                         print(f"Error sending transcript: {e}")
             
             # Remove from open tickets
-        if str(interaction.channel_id) in open_tickets:
+            if str(interaction.channel_id) in open_tickets:
                 del open_tickets[str(interaction.channel_id)]
                 tickets["open_tickets"] = open_tickets
                 await save_tickets(tickets)
             
-                       # Start deletion countdown.
-                await interaction.response.edit_message(
+            # Start deletion countdown.
+            await interaction.response.edit_message(
                 content=bold_msg(
                     "🗑️ سيتم حذف التذكرة خلال 10 ثوانٍ.",
                     ""
@@ -1980,24 +1977,24 @@ class TicketCloseConfirmView(discord.ui.View):
                 view=None
             )
 
-                await asyncio.sleep(10)
+            await asyncio.sleep(10)
 
-        try:
+            try:
                 await channel.delete(
                     reason=f"تم حذف التذكرة بواسطة {interaction.user.name}"
                 )
-        except Exception:
+            except Exception:
                 pass
             
         except Exception as e:
             print(f"Error deleting ticket: {e}")
             traceback.print_exc()
-        try:
+            try:
                 await interaction.response.send_message(
                     bold_msg(f"حدث خطأ: {str(e)}", "❌"),
                     ephemeral=True
                 )
-        except:
+            except:
                 pass
 
 # ==============================================================================
@@ -2141,7 +2138,7 @@ async def set_teams(
         ),
         ephemeral=True
     )
-    
+
 @bot.tree.command(
     name="add_team",
     description="إضافة نادي جديد"
@@ -2272,7 +2269,7 @@ async def add_team(
         embed=embed,
         ephemeral=True
     )
-    
+
 @bot.tree.command(
     name="team_timeout",
     description="إيقاف نادي عن تقديم عروض للاعبين"
@@ -2326,7 +2323,7 @@ async def team_timeout(
             "⛔"
         )
     )
-    
+
 @bot.tree.command(
     name="team_untimeout",
     description="إزالة Team Timeout عن النادي"
@@ -2379,7 +2376,7 @@ async def team_untimeout(
             "✅"
         )
     )
-    
+
 @bot.tree.command(
     name="appoint_fo",
     description="تعيين رئيس للنادي"
@@ -2453,9 +2450,8 @@ async def appoint_fo(
             roles=True
         )
     )
-    
-TEAM_OFFERS = {}
 
+TEAM_OFFERS = {}
 
 class TeamOfferView(discord.ui.View):
 
@@ -2716,31 +2712,31 @@ class TeamOfferView(discord.ui.View):
             except Exception:
                 pass
 
-    async def finish_offer(
-        interaction: discord.Interaction,
-        offer_id: str,
-        result: str
+async def finish_offer(
+    interaction: discord.Interaction,
+    offer_id: str,
+    result: str
 ):
-        offer = TEAM_OFFERS.pop(
+    offer = TEAM_OFFERS.pop(
         offer_id,
         None
     )
 
-        if not offer:
-            await interaction.response.send_message(
-                bold_msg(
-                    "العرض انتهت صلاحيته.",
-                    "⏰"
+    if not offer:
+        await interaction.response.send_message(
+            bold_msg(
+                "العرض انتهت صلاحيته.",
+                "⏰"
             ),
             ephemeral=True
         )
         return
 
-        guild = bot.get_guild(
-            offer["guild_id"]
+    guild = bot.get_guild(
+        offer["guild_id"]
     )
 
-        team = None
+    team = None
 
     if guild:
         data = await load_teams()
@@ -2792,79 +2788,79 @@ class TeamOfferView(discord.ui.View):
                     )
                 except Exception:
                     pass
-                    
-    @bot.tree.command(
-        name="offer",
-        description="إرسال عرض للاعب"
-)
-    @app_commands.describe(
-        user="اللاعب الذي تريد تقديم العرض له"
-)
-    async def offer(
-        interaction: discord.Interaction,
-        user: discord.Member
-    ):
-        data = await load_teams()
 
-        team_id, team = get_member_team(
-            data,
-            interaction.user
+@bot.tree.command(
+    name="offer",
+    description="إرسال عرض للاعب"
+)
+@app_commands.describe(
+    user="اللاعب الذي تريد تقديم العرض له"
+)
+async def offer(
+    interaction: discord.Interaction,
+    user: discord.Member
+):
+    data = await load_teams()
+
+    team_id, team = get_member_team(
+        data,
+        interaction.user
     )
 
-        if not team:
-            await interaction.response.send_message(
-                bold_msg(
-                    "يجب أن تكون لديك رتبة نادي أولًا.",
-                    "❌"
-                ),
-                ephemeral=True
-            )
-            return
+    if not team:
+        await interaction.response.send_message(
+            bold_msg(
+                "يجب أن تكون لديك رتبة نادي أولًا.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
 
-        if not member_has_role(
-            interaction.user,
-            TEAM_OWNER_ROLE_ID
-        ):
-            await interaction.response.send_message(
-                bold_msg(
-                    "يجب أن تكون لديك رتبة Team Owner لاستخدام هذا الأمر.",
-                    "🔒"
-                ),
-                ephemeral=True
-            )
-            return
+    if not member_has_role(
+        interaction.user,
+        TEAM_OWNER_ROLE_ID
+    ):
+        await interaction.response.send_message(
+            bold_msg(
+                "يجب أن تكون لديك رتبة Team Owner لاستخدام هذا الأمر.",
+                "🔒"
+            ),
+            ephemeral=True
+        )
+        return
 
-        if user.bot:
-            await interaction.response.send_message(
-                bold_msg(
-                    "لا يمكنك إرسال عرض إلى بوت.",
-                    "❌"
-                ),
-                ephemeral=True
-            )
-            return
+    if user.bot:
+        await interaction.response.send_message(
+            bold_msg(
+                "لا يمكنك إرسال عرض إلى بوت.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
 
-        if user.id == interaction.user.id:
-            await interaction.response.send_message(
-                bold_msg(
-                    "لا يمكنك إرسال عرض لنفسك.",
-                    "❌"
-                ),
-                ephemeral=True
-            )
-            return
+    if user.id == interaction.user.id:
+        await interaction.response.send_message(
+            bold_msg(
+                "لا يمكنك إرسال عرض لنفسك.",
+                "❌"
+            ),
+            ephemeral=True
+        )
+        return
 
-        if team_is_timed_out(
-            str(team_id)
-        ):
-            await interaction.response.send_message(
-                bold_msg(
-                   "فريقك في Team Timeout ولا يمكنك تقديم عروض حاليًا.",
-                   "⛔"
-                ),
-                ephemeral=True
-            )
-            return
+    if team_is_timed_out(
+        str(team_id)
+    ):
+        await interaction.response.send_message(
+            bold_msg(
+               "فريقك في Team Timeout ولا يمكنك تقديم عروض حاليًا.",
+               "⛔"
+            ),
+            ephemeral=True
+        )
+        return
 
     role = interaction.guild.get_role(
         int(team["role_id"])
@@ -2990,8 +2986,8 @@ class TeamOfferView(discord.ui.View):
             users=True
         )
     )
-    TEAM_DEMANDS = {}
 
+TEAM_DEMANDS = {}
 
 class TeamDemandView(discord.ui.View):
 
@@ -3103,7 +3099,8 @@ class TeamDemandView(discord.ui.View):
                 )
             except Exception:
                 pass
-                @bot.tree.command(
+
+@bot.tree.command(
     name="demand",
     description="طلب الخروج من النادي"
 )
@@ -3218,7 +3215,8 @@ async def demand(
         ),
         ephemeral=True
     )
-    @bot.tree.command(
+
+@bot.tree.command(
     name="release",
     description="فسخ عقد لاعب من النادي"
 )
@@ -3510,11 +3508,10 @@ async def team_sign_expiry_checker():
             guild
         )
 
-
 @team_sign_expiry_checker.before_loop
 async def before_team_sign_expiry_checker():
     await bot.wait_until_ready()
-    
+
 # ==============================================================================
 # TICKET SLASH COMMANDS (NEW)
 # ==============================================================================
