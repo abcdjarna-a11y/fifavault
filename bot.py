@@ -4354,20 +4354,20 @@ class WhoAmIView(discord.ui.View):
            answer,
            clues,
            starter_id
-    ):
-        self.ctx = ctx
-        self.channel_id = ctx.channel.id
-        self.answer = answer
-        self.clues = list(clues)
-        random.shuffle(self.clues)
+        ):
+            self.ctx = ctx
+            self.channel_id = ctx.channel.id
+            self.answer = answer
+            self.clues = list(clues)
+            random.shuffle(self.clues)
 
-        self.starter_id = starter_id
-        self.hints_used = 0
-        self.hint_lines = []
-        self.finished = False
-        self.message = None
-        self.message_id = None
-        self.guess_task = None
+            self.starter_id = starter_id
+            self.hints_used = 0
+            self.hint_lines = []
+            self.finished = False
+            self.message = None
+            self.message_id = None
+            self.guess_task = None
 
     def build_embed(self):
         if self.finished:
