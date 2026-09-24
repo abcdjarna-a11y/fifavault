@@ -2716,31 +2716,31 @@ class TeamOfferView(discord.ui.View):
             except Exception:
                 pass
 
-                async def finish_offer(
-    interaction: discord.Interaction,
-    offer_id: str,
-    result: str
+    async def finish_offer(
+        interaction: discord.Interaction,
+        offer_id: str,
+        result: str
 ):
-    offer = TEAM_OFFERS.pop(
+        offer = TEAM_OFFERS.pop(
         offer_id,
         None
     )
 
-    if not offer:
-        await interaction.response.send_message(
-            bold_msg(
-                "العرض انتهت صلاحيته.",
-                "⏰"
+        if not offer:
+            await interaction.response.send_message(
+                bold_msg(
+                    "العرض انتهت صلاحيته.",
+                    "⏰"
             ),
             ephemeral=True
         )
         return
 
-    guild = bot.get_guild(
-        offer["guild_id"]
+        guild = bot.get_guild(
+            offer["guild_id"]
     )
 
-    team = None
+        team = None
 
     if guild:
         data = await load_teams()
