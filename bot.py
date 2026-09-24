@@ -2797,8 +2797,8 @@ class TeamOfferView(discord.ui.View):
         name="offer",
         description="إرسال عرض للاعب"
 )
-@app_commands.describe(
-    user="اللاعب الذي تريد تقديم العرض له"
+    @app_commands.describe(
+        user="اللاعب الذي تريد تقديم العرض له"
 )
 async def offer(
     interaction: discord.Interaction,
