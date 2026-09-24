@@ -4348,12 +4348,12 @@ class WhoAmIView(discord.ui.View):
                 timeout=True
             )
        class WhoAmIGame:
-    def __init__(
-        self,
-        ctx,
-        answer,
-        clues,
-        starter_id
+           def __init__(
+           self,
+           ctx,
+           answer,
+           clues,
+           starter_id
     ):
         self.ctx = ctx
         self.channel_id = ctx.channel.id
