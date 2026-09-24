@@ -1971,7 +1971,7 @@ class TicketCloseConfirmView(discord.ui.View):
                 await save_tickets(tickets)
             
                        # Start deletion countdown.
-            await interaction.response.edit_message(
+                await interaction.response.edit_message(
                 content=bold_msg(
                     "🗑️ سيتم حذف التذكرة خلال 10 ثوانٍ.",
                     ""
@@ -1980,7 +1980,7 @@ class TicketCloseConfirmView(discord.ui.View):
                 view=None
             )
 
-            await asyncio.sleep(10)
+                await asyncio.sleep(10)
 
             try:
                 await channel.delete(
@@ -1989,7 +1989,7 @@ class TicketCloseConfirmView(discord.ui.View):
             except Exception:
                 pass
             
-        except Exception as e:
+            except Exception as e:
             print(f"Error deleting ticket: {e}")
             traceback.print_exc()
             try:
