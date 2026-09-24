@@ -3615,7 +3615,7 @@ async def on_ready():
     except Exception as e:
         print(f"Sync error: {e}")
         if not team_sign_expiry_checker.is_running():
-        team_sign_expiry_checker.start()
+            team_sign_expiry_checker.start()
 
 @bot.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
