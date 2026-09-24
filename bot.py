@@ -736,9 +736,9 @@ async def create_ticket_channel(guild: discord.Guild, ticket_type: str, creator:
         channel_name = f"{type_name_ar}-{number}"
         
         # Find or create tickets category
-        category = discord.utils.get(guild.categories, name="SUPPORT TICKETS")
+        category = discord.utils.get(guild.categories, name="التذاكر")
         if not category:
-            category = await guild.create_category("SUPPORT TICKETS")
+            category = await guild.create_category("التذاكر")
         
         # Set up permissions
         overwrites = {
