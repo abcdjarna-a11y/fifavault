@@ -2792,10 +2792,10 @@ class TeamOfferView(discord.ui.View):
                     )
                 except Exception:
                     pass
-
-                     @bot.tree.command(
-    name="offer",
-    description="إرسال عرض للاعب"
+                    
+    @bot.tree.command(
+        name="offer",
+        description="إرسال عرض للاعب"
 )
 @app_commands.describe(
     user="اللاعب الذي تريد تقديم العرض له"
