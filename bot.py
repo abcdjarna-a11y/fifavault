@@ -3692,15 +3692,16 @@ async def on_member_join(member: discord.Member):
     )
 
     try:
-        await channel.send(
-            content=welcome_message,
-            embed=discord.Embed().set_image(
-                url=TOUCHLINE_IMAGE_URL
-            )
-        )
-    except Exception as e:
-        print(f"[WELCOME] Failed to send welcome message: {e}")
-        
+    await channel.send(welcome_message)
+
+    welcome_embed = discord.Embed()
+    welcome_embed.set_image(url=TOUCHLINE_IMAGE_URL)
+
+    await channel.send(embed=welcome_embed)
+
+except Exception as e:
+    print(f"[WELCOME] Failed to send welcome message: {e}")
+    
 # ==============================================================================
 # Events
 # ==============================================================================
