@@ -45,6 +45,8 @@ RULES_CHANNEL_ID = 1541195966105911368
 TWITTER_CHANNEL_ID = 1541223961332031528
 ANNOUNCEMENTS_CHANNEL_ID = 1541192362204860436
 
+WELCOME_FILE = "welcome_config.json"
+MEMBER_ROLE_ID = 1541192334115602483
 # ==============================================================================
 # BOT TEAM SIGN SYSTEM
 # ==============================================================================
@@ -3603,6 +3605,97 @@ async def set_transcript_channel(interaction: discord.Interaction, channel: disc
             ephemeral=True
         )
 
+# ==============================================================================
+# WELCOME SYSTEM
+# ==============================================================================
+
+async def load_welcome_config():
+    return await async_load_json(WELCOME_FILE)
+
+
+async def save_welcome_config(data):
+    await async_save_json(WELCOME_FILE, data)
+
+
+@bot.tree.command(
+    name="set_welcome",
+    description="تحديد روم الترحيب"
+)
+@app_commands.describe(
+    channel="اختر روم الترحيب"
+)
+async def set_welcome(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel
+):
+    if not check_slash_permissions(interaction):
+        await interaction.response.send_message(
+            "❌ ليس لديك صلاحية استخدام هذا الأمر.",
+            ephemeral=True
+        )
+        return
+
+    config = await load_welcome_config()
+
+    config[str(interaction.guild.id)] = {
+        "channel_id": channel.id
+    }
+
+    await save_welcome_config(config)
+
+    await interaction.response.send_message(
+        f"✅ تم تحديد روم الترحيب: {channel.mention}",
+        ephemeral=True
+    )
+
+
+@bot.event
+async def on_member_join(member: discord.Member):
+    # إعطاء رتبة Member
+    role = member.guild.get_role(MEMBER_ROLE_ID)
+
+    if role is not None:
+        try:
+            await member.add_roles(
+                role,
+                reason="Automatic Member role"
+            )
+        except Exception as e:
+            print(f"[WELCOME] Failed to add Member role: {e}")
+    else:
+        print(
+            f"[WELCOME] Member role not found: {MEMBER_ROLE_ID}"
+        )
+
+    # تحميل إعدادات الترحيب
+    config = await load_welcome_config()
+
+    guild_config = config.get(str(member.guild.id))
+
+    if not guild_config:
+        return
+
+    channel_id = guild_config.get("channel_id")
+
+    channel = member.guild.get_channel(channel_id)
+
+    if channel is None:
+        print(
+            f"[WELCOME] Welcome channel not found: {channel_id}"
+        )
+        return
+
+    welcome_message = (
+        f"{member.mention} مرحبا بك في سيرفر فيفا فولت 🩷😊\n\n"
+        f"توجه لروم <#{RULES_CHANNEL_ID}> لمعرفة قوانين السيرفر، "
+        f"و توجه ل <#{SUPPORT_CHANNEL_ID}> لرفع شكوى او طلب الدعم الفني 😊🌹"
+    )
+
+    try:
+        await channel.send(welcome_message)
+    except Exception as e:
+        print(f"[WELCOME] Failed to send welcome message: {e}")
+        
 # ==============================================================================
 # Events
 # ==============================================================================
