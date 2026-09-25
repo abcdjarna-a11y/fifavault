@@ -3691,7 +3691,7 @@ async def on_member_join(member: discord.Member):
         f"و توجه ل <#{SUPPORT_CHANNEL_ID}> لرفع شكوى او طلب الدعم الفني 😊🌹"
     )
 
-        try:
+    try:
         await channel.send(
             content=welcome_message,
             embed=discord.Embed().set_image(
