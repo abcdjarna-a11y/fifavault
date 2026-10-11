@@ -164,7 +164,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             await interaction.response.edit_message(content=f"أُلغي القرار التلقائي بواسطة {interaction.user.mention}. الحادثة بقيت في السجل.", view=self)
 
     async def make_incident(guild, actor, label, points, force_ban=False):
-        if not isinstance(actor, discord.Member) or actor.id == guild.owner_id:
+        if not isinstance(actor, discord.Member):
             return
         data = await read_state()
         gs = guild_state(data, guild.id)
@@ -365,10 +365,16 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             if not manageable(guild, role):
                 continue
             perms = role.permissions
-            if perms.administrator or perms.create_instant_invite:
+            dangerous_permissions = (
+                "administrator", "manage_guild", "manage_roles", "manage_channels",
+                "ban_members", "kick_members", "create_instant_invite",
+                "manage_webhooks", "manage_messages", "manage_threads", "mention_everyone"
+            )
+            if any(getattr(perms, name, False) for name in dangerous_permissions):
                 gs["role_permissions_backup"][str(role.id)] = int(perms.value)
-                perms.administrator = False
-                perms.create_instant_invite = False
+                for name in dangerous_permissions:
+                    if hasattr(perms, name):
+                        setattr(perms, name, False)
                 try:
                     await role.edit(permissions=perms, reason=f"/nuke by owner {interaction.user.id}")
                     changed += 1
