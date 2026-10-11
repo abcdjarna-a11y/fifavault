@@ -433,9 +433,14 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
         if failures == 0:
             gs["nuke_ended_at"] = now().isoformat()
         await write_state(data)
-        await send_alert(guild, discord.Embed(title="🟢 انتهى وضع الطوارئ",
-            description=f"تمت استعادة {restored} رتبة؛ تعذر استعادة {failures}.", color=discord.Color.green(), timestamp=now()))
-        await interaction.followup.send(f"تم إيقاف الطوارئ. تمت استعادة {restored} رتبة؛ تعذر استعادة {failures}.", ephemeral=True)
+        if failures:
+            await send_alert(guild, discord.Embed(title="🟠 استعادة جزئية — الطوارئ ما زالت مفعّلة",
+                description=f"تمت استعادة {restored} رتبة؛ تعذر استعادة {failures}. عالج ترتيب الرتب أو الصلاحيات ثم أعد /unnuke.", color=discord.Color.orange(), timestamp=now()))
+            await interaction.followup.send(f"استعادة جزئية: تمت استعادة {restored} رتبة؛ تعذر استعادة {failures}. وضع الطوارئ ما زال مفعّلًا حتى نجاح الاستعادة.", ephemeral=True)
+        else:
+            await send_alert(guild, discord.Embed(title="🟢 انتهى وضع الطوارئ",
+                description=f"تمت استعادة {restored} رتبة؛ لم تتبقَّ رتب تحتاج إلى استعادة.", color=discord.Color.green(), timestamp=now()))
+            await interaction.followup.send(f"تم إيقاف الطوارئ بنجاح. تمت استعادة {restored} رتبة.", ephemeral=True)
 
     @bot.command(name="إرجاع")
     async def restore_command(ctx, member: discord.Member):
