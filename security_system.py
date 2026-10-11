@@ -200,6 +200,16 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
                     item["status"] = "member_not_in_server"
                     await write_state(latest)
                     return
+                if current_member.id == guild.owner_id:
+                    item["status"] = "owner_cannot_be_moderated_by_bot"
+                    item["completed_at"] = now().isoformat()
+                    await write_state(latest)
+                    await send_alert(guild, discord.Embed(
+                        title="⚠️ تنبيه أمني: مالك السيرفر",
+                        description=f"تم رصد فعل عالي الخطورة من مالك السيرفر {current_member.mention}. لا يستطيع Discord السماح للبوت بسحب ملكيته أو حظره؛ يلزم تدخل بشري.",
+                        color=discord.Color.orange(), timestamp=now()
+                    ))
+                    return
                 await contain_member(current_member, f"Security response: {label}")
                 if item.get("force_ban") and guild.me and guild.me.guild_permissions.ban_members:
                     try:
