@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from threading import Thread
 from flask import Flask
+from security_system import setup_security
 
 # ==============================================================================
 # TOUCHLINE / FIFA VALT DISCORD BOT - EXTENDED BUILD
@@ -4336,6 +4337,7 @@ async def on_command_error(ctx, error):
         pass
 
 async def main():
+    await setup_security(bot, MY_DISCORD_ID, load_server_config, save_server_config)
     async with bot:
         if BOT_TOKEN:
             await bot.start(BOT_TOKEN)
