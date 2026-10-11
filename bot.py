@@ -16,7 +16,7 @@ from threading import Thread
 from flask import Flask
 
 # ==============================================================================
-# TOUCHLINE / FIFA VAULT DISCORD BOT - EXTENDED BUILD
+# TOUCHLINE / FIFA VALT DISCORD BOT - EXTENDED BUILD
 # ==============================================================================
 
 app = Flask(__name__)
