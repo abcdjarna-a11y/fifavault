@@ -1977,6 +1977,74 @@ async def set_transcript_channel(interaction: discord.Interaction, channel: disc
             ephemeral=True
         )
 
+
+# ==============================================================================
+# SERVER AUDIT LOGGING
+# ==============================================================================
+LOG_CONFIG_KEY = "logging"
+
+async def send_configured_log(guild: discord.Guild, log_type: str, embed: discord.Embed):
+    """Send an audit embed to the configured channel, if one is set."""
+    try:
+        config = await load_server_config()
+        guild_config = config.get(str(guild.id), {})
+        channel_id = guild_config.get(LOG_CONFIG_KEY, {}).get(log_type)
+        if not channel_id:
+            return
+        channel = guild.get_channel(int(channel_id))
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(int(channel_id))
+            except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
+                return
+        if hasattr(channel, "send"):
+            await channel.send(embed=embed)
+    except Exception as e:
+        print(f"Logging error ({log_type}): {e}")
+
+async def set_log_channel(interaction: discord.Interaction, log_type: str, channel: discord.TextChannel, label: str):
+    if not check_slash_permissions(interaction):
+        await interaction.response.send_message(bold_msg("ليس لديك صلاحية استخدام هذا الأمر.", "🔒"), ephemeral=True)
+        return
+    if interaction.guild_id is None:
+        await interaction.response.send_message("هذا الأمر يعمل داخل السيرفر فقط.", ephemeral=True)
+        return
+    config = await load_server_config()
+    guild_config = config.setdefault(str(interaction.guild_id), {})
+    log_config = guild_config.setdefault(LOG_CONFIG_KEY, {})
+    log_config[log_type] = channel.id
+    await save_server_config(config)
+    await interaction.response.send_message(bold_msg(f"تم تعيين {channel.mention} كقناة {label} بنجاح.", "✅"), ephemeral=True)
+
+async def audit_actor(guild: discord.Guild, action: discord.AuditLogAction, target_id: int = None):
+    """Best-effort audit-log actor lookup; missing permission is harmless."""
+    try:
+        async for entry in guild.audit_logs(limit=6, action=action):
+            if target_id is not None and getattr(entry.target, "id", None) != target_id:
+                continue
+            if (discord.utils.utcnow() - entry.created_at).total_seconds() <= 20:
+                return entry.user, (entry.reason or "بدون سبب")
+    except (discord.Forbidden, discord.HTTPException):
+        pass
+    except Exception as e:
+        print(f"Audit actor lookup failed: {e}")
+    return None, "تعذر تحديد المنفذ أو لا توجد صلاحية عرض سجل التدقيق"
+
+@bot.tree.command(name="set_textlog", description="تعيين قناة سجل الرسائل المحذوفة")
+@app_commands.describe(channel="القناة التي ستظهر فيها سجلات حذف الرسائل")
+async def set_textlog(interaction: discord.Interaction, channel: discord.TextChannel):
+    await set_log_channel(interaction, "text", channel, "سجل الرسائل")
+
+@bot.tree.command(name="set_channellog", description="تعيين قناة سجل إنشاء وحذف وتعديل القنوات")
+@app_commands.describe(channel="القناة التي ستظهر فيها سجلات القنوات")
+async def set_channellog(interaction: discord.Interaction, channel: discord.TextChannel):
+    await set_log_channel(interaction, "channels", channel, "سجل القنوات")
+
+@bot.tree.command(name="set_roleslog", description="تعيين قناة سجل الرتب")
+@app_commands.describe(channel="القناة التي ستظهر فيها سجلات الرتب")
+async def set_roleslog(interaction: discord.Interaction, channel: discord.TextChannel):
+    await set_log_channel(interaction, "roles", channel, "سجل الرتب")
+
 # ==============================================================================
 # Events
 # ==============================================================================
@@ -1991,6 +2059,21 @@ async def on_ready():
 
 @bot.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
+    guild = bot.get_guild(payload.guild_id) if payload.guild_id else None
+    if guild is not None:
+        channel = guild.get_channel(payload.channel_id)
+        cached = payload.cached_message
+        embed = discord.Embed(title="🗑️ حذف رسالة", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+        embed.add_field(name="القناة", value=channel.mention if channel else f"ID: {payload.channel_id}", inline=False)
+        if cached is not None:
+            embed.add_field(name="الكاتب", value=f"{cached.author} (ID: {cached.author.id})", inline=False)
+            content = cached.content or "[لا يوجد نص؛ قد تكون الرسالة مرفقًا أو صورة]"
+            embed.add_field(name="المحتوى", value=content[:1024], inline=False)
+            if cached.attachments:
+                embed.add_field(name="المرفقات", value="\n".join(a.url for a in cached.attachments)[:1024], inline=False)
+        else:
+            embed.add_field(name="المحتوى", value="الرسالة غير موجودة في الذاكرة المؤقتة؛ لم يتوفر محتواها.", inline=False)
+        await send_configured_log(guild, "text", embed)
     game = ACTIVE_WHO_AM_I.get(
         payload.channel_id
     )
@@ -2016,6 +2099,108 @@ async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
         f"Channel: {payload.channel_id}"
     )
     
+
+@bot.event
+async def on_raw_bulk_message_delete(payload: discord.RawBulkMessageDeleteEvent):
+    guild = bot.get_guild(payload.guild_id) if payload.guild_id else None
+    if guild is None:
+        return
+    channel = guild.get_channel(payload.channel_id)
+    embed = discord.Embed(title="🗑️ حذف مجموعة رسائل", color=discord.Color.orange(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="القناة", value=channel.mention if channel else f"ID: {payload.channel_id}", inline=False)
+    embed.add_field(name="عدد الرسائل", value=str(len(payload.message_ids)), inline=True)
+    embed.add_field(name="ملاحظة", value="Discord لا يوفّر محتوى الرسائل المحذوفة بالجملة عبر هذا الحدث.", inline=False)
+    await send_configured_log(guild, "text", embed)
+
+@bot.event
+async def on_guild_channel_create(channel: discord.abc.GuildChannel):
+    actor, reason = await audit_actor(channel.guild, discord.AuditLogAction.channel_create, channel.id)
+    embed = discord.Embed(title="➕ إنشاء قناة", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="القناة", value=f"{channel.name} (ID: {channel.id})", inline=False)
+    embed.add_field(name="المنفذ", value=str(actor) if actor else "غير معروف", inline=True)
+    embed.add_field(name="السبب", value=reason[:1024], inline=False)
+    await send_configured_log(channel.guild, "channels", embed)
+
+@bot.event
+async def on_guild_channel_delete(channel: discord.abc.GuildChannel):
+    actor, reason = await audit_actor(channel.guild, discord.AuditLogAction.channel_delete, channel.id)
+    embed = discord.Embed(title="➖ حذف قناة", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="اسم القناة", value=f"{channel.name} (ID: {channel.id})", inline=False)
+    embed.add_field(name="المنفذ", value=str(actor) if actor else "غير معروف", inline=True)
+    embed.add_field(name="السبب", value=reason[:1024], inline=False)
+    await send_configured_log(channel.guild, "channels", embed)
+
+@bot.event
+async def on_guild_channel_update(before: discord.abc.GuildChannel, after: discord.abc.GuildChannel):
+    changes = []
+    for attr, label in (("name", "الاسم"), ("topic", "الوصف"), ("category_id", "التصنيف"), ("position", "الترتيب"), ("slowmode_delay", "البطء"), ("nsfw", "NSFW"), ("bitrate", "جودة الصوت"), ("user_limit", "حد المستخدمين")):
+        old, new = getattr(before, attr, None), getattr(after, attr, None)
+        if old != new:
+            changes.append(f"**{label}:** {old!s} ← {new!s}")
+    if before.overwrites != after.overwrites:
+        changes.append("**الصلاحيات:** تم تعديل صلاحيات القناة.")
+    if not changes:
+        return
+    actor, reason = await audit_actor(after.guild, discord.AuditLogAction.channel_update, after.id)
+    embed = discord.Embed(title="✏️ تعديل قناة", description="\n".join(changes)[:4000], color=discord.Color.gold(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="القناة", value=f"{after.name} (ID: {after.id})", inline=False)
+    embed.add_field(name="المنفذ", value=str(actor) if actor else "غير معروف", inline=True)
+    embed.add_field(name="السبب", value=reason[:1024], inline=False)
+    await send_configured_log(after.guild, "channels", embed)
+
+@bot.event
+async def on_guild_role_create(role: discord.Role):
+    actor, reason = await audit_actor(role.guild, discord.AuditLogAction.role_create, role.id)
+    embed = discord.Embed(title="➕ إنشاء رتبة", color=discord.Color.green(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="الرتبة", value=f"{role.name} (ID: {role.id})", inline=False)
+    embed.add_field(name="المنفذ", value=str(actor) if actor else "غير معروف", inline=True)
+    embed.add_field(name="السبب", value=reason[:1024], inline=False)
+    await send_configured_log(role.guild, "roles", embed)
+
+@bot.event
+async def on_guild_role_delete(role: discord.Role):
+    actor, reason = await audit_actor(role.guild, discord.AuditLogAction.role_delete, role.id)
+    embed = discord.Embed(title="➖ حذف رتبة", color=discord.Color.red(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="اسم الرتبة", value=f"{role.name} (ID: {role.id})", inline=False)
+    embed.add_field(name="المنفذ", value=str(actor) if actor else "غير معروف", inline=True)
+    embed.add_field(name="السبب", value=reason[:1024], inline=False)
+    await send_configured_log(role.guild, "roles", embed)
+
+@bot.event
+async def on_guild_role_update(before: discord.Role, after: discord.Role):
+    changes = []
+    for attr, label in (("name", "الاسم"), ("colour", "اللون"), ("hoist", "إظهار منفصل"), ("mentionable", "قابلة للمنشن"), ("permissions", "الصلاحيات"), ("position", "الترتيب")):
+        old, new = getattr(before, attr, None), getattr(after, attr, None)
+        if old != new:
+            if attr == "permissions":
+                old = ", ".join(p for p, enabled in before.permissions if enabled) or "لا شيء"
+                new = ", ".join(p for p, enabled in after.permissions if enabled) or "لا شيء"
+            changes.append(f"**{label}:** {str(old)[:450]} → {str(new)[:450]}")
+    if not changes:
+        return
+    actor, reason = await audit_actor(after.guild, discord.AuditLogAction.role_update, after.id)
+    embed = discord.Embed(title="✏️ تعديل رتبة", description="\n".join(changes)[:4000], color=discord.Color.gold(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="الرتبة", value=f"{after.name} (ID: {after.id})", inline=False)
+    embed.add_field(name="المنفذ", value=str(actor) if actor else "غير معروف", inline=True)
+    embed.add_field(name="السبب", value=reason[:1024], inline=False)
+    await send_configured_log(after.guild, "roles", embed)
+
+@bot.event
+async def on_member_update(before: discord.Member, after: discord.Member):
+    old_ids = {role.id for role in before.roles}
+    new_ids = {role.id for role in after.roles}
+    added = [role for role in after.roles if role.id not in old_ids and role.id != after.guild.id]
+    removed = [role for role in before.roles if role.id not in new_ids and role.id != before.guild.id]
+    if not added and not removed:
+        return
+    embed = discord.Embed(title="🔄 تغيير رتب عضو", color=discord.Color.blurple(), timestamp=discord.utils.utcnow())
+    embed.add_field(name="العضو", value=f"{after.mention} ({after} / {after.id})", inline=False)
+    if added:
+        embed.add_field(name="رتب أُضيفت", value=", ".join(r.name for r in added)[:1024], inline=False)
+    if removed:
+        embed.add_field(name="رتب أُزيلت", value=", ".join(r.name for r in removed)[:1024], inline=False)
+    await send_configured_log(after.guild, "roles", embed)
+
 @bot.event
 async def on_message(message: discord.Message):
     """Keep Auto Replies while always allowing discord.py prefix commands to run.
