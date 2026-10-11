@@ -2052,10 +2052,20 @@ async def set_roleslog(interaction: discord.Interaction, channel: discord.TextCh
 async def on_ready():
     print(f"✅ Bot Online as: {bot.user}")
     try:
-        await bot.tree.sync()
-        print("Synced all slash commands successfully.")
+        # Publish globally, then sync to each connected server so new commands
+        # appear immediately instead of waiting for global command propagation.
+        synced_global = await bot.tree.sync()
+        print(f"Synced {len(synced_global)} global slash commands.")
+        for guild in bot.guilds:
+            try:
+                guild_object = discord.Object(id=guild.id)
+                bot.tree.copy_global_to(guild=guild_object)
+                synced_guild = await bot.tree.sync(guild=guild_object)
+                print(f"Synced {len(synced_guild)} slash commands to guild {guild.name} ({guild.id}).")
+            except Exception as guild_error:
+                print(f"Guild slash-command sync failed for {guild.id} ({guild.name}): {guild_error}")
     except Exception as e:
-        print(f"Sync error: {e}")
+        print(f"Global slash-command sync error: {e}")
 
 @bot.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
