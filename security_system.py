@@ -382,6 +382,8 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             )
             if any(getattr(perms, name, False) for name in dangerous_permissions):
                 gs["role_permissions_backup"][str(role.id)] = int(perms.value)
+                # Persist the original permissions before attempting any mutation.
+                await write_state(data)
                 for name in dangerous_permissions:
                     if hasattr(perms, name):
                         setattr(perms, name, False)
@@ -412,19 +414,24 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
         restored, failures = 0, 0
+        remaining_backup = {}
         for role_id, raw in list(gs.get("role_permissions_backup", {}).items()):
             role = guild.get_role(int(role_id))
             if not role or not manageable(guild, role):
                 failures += 1
+                remaining_backup[role_id] = raw
                 continue
             try:
                 await role.edit(permissions=discord.Permissions(int(raw)), reason=f"/unnuke by owner {interaction.user.id}")
                 restored += 1
             except (discord.Forbidden, discord.HTTPException):
                 failures += 1
-        gs["nuke_enabled"] = False
-        gs["nuke_ended_at"] = now().isoformat()
-        gs["role_permissions_backup"] = {}
+                remaining_backup[role_id] = raw
+        gs["role_permissions_backup"] = remaining_backup
+        # Keep emergency mode active if restoration is incomplete so /unnuke can be retried.
+        gs["nuke_enabled"] = failures > 0
+        if failures == 0:
+            gs["nuke_ended_at"] = now().isoformat()
         await write_state(data)
         await send_alert(guild, discord.Embed(title="🟢 انتهى وضع الطوارئ",
             description=f"تمت استعادة {restored} رتبة؛ تعذر استعادة {failures}.", color=discord.Color.green(), timestamp=now()))
