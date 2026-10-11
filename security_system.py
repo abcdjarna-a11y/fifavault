@@ -46,7 +46,11 @@ def guild_state(data, guild_id):
 
 def manageable(guild, role):
     me = guild.me
-    return bool(me and role and not role.is_default() and not role.managed and me.top_role > role)
+    if not me or not role:
+        return False
+    if role.is_default():
+        return bool(me.guild_permissions.manage_roles)
+    return bool(not role.managed and me.top_role > role)
 
 def whitelisted(member):
     return any(getattr(r, "id", None) == WHITELIST_ROLE_ID for r in getattr(member, "roles", []))
