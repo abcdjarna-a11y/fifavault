@@ -2056,14 +2056,15 @@ async def on_ready():
         # appear immediately instead of waiting for global command propagation.
         synced_global = await bot.tree.sync()
         print(f"Synced {len(synced_global)} global slash commands.")
+        # Clear old guild-specific copies of global commands to prevent duplicates.
+        # Commands are registered globally only; do not copy them into each guild.
         for guild in bot.guilds:
             try:
                 guild_object = discord.Object(id=guild.id)
-                bot.tree.copy_global_to(guild=guild_object)
                 synced_guild = await bot.tree.sync(guild=guild_object)
-                print(f"Synced {len(synced_guild)} slash commands to guild {guild.name} ({guild.id}).")
+                print(f"Cleaned up {len(synced_guild)} guild-specific slash commands for {guild.name} ({guild.id}).")
             except Exception as guild_error:
-                print(f"Guild slash-command sync failed for {guild.id} ({guild.name}): {guild_error}")
+                print(f"Guild slash-command cleanup failed for {guild.id} ({guild.name}): {guild_error}")
     except Exception as e:
         print(f"Global slash-command sync error: {e}")
 
