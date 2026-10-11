@@ -2200,16 +2200,44 @@ async def on_guild_role_update(before: discord.Role, after: discord.Role):
 async def on_member_update(before: discord.Member, after: discord.Member):
     old_ids = {role.id for role in before.roles}
     new_ids = {role.id for role in after.roles}
-    added = [role for role in after.roles if role.id not in old_ids and role.id != after.guild.id]
-    removed = [role for role in before.roles if role.id not in new_ids and role.id != before.guild.id]
+    # Sort by hierarchy position for a tidy, predictable log.
+    added = sorted(
+        [role for role in after.roles if role.id not in old_ids and role.id != after.guild.id],
+        key=lambda role: role.position
+    )
+    removed = sorted(
+        [role for role in before.roles if role.id not in new_ids and role.id != before.guild.id],
+        key=lambda role: role.position
+    )
     if not added and not removed:
         return
-    embed = discord.Embed(title="🔄 تغيير رتب عضو", color=discord.Color.blurple(), timestamp=discord.utils.utcnow())
-    embed.add_field(name="العضو", value=f"{after.mention} ({after} / {after.id})", inline=False)
+
+    # The audit log identifies who granted/removed the roles when the bot
+    # has View Audit Log permission and Discord has published the entry.
+    actor, reason = await audit_actor(
+        after.guild,
+        discord.AuditLogAction.member_role_update,
+        after.id
+    )
+
+    embed = discord.Embed(
+        title="🎖️ سجل تغييرات الرتب",
+        color=discord.Color.blurple(),
+        timestamp=discord.utils.utcnow()
+    )
+    embed.add_field(name="👤 العضو", value=after.mention, inline=False)
+    embed.add_field(name="🛠️ المنفّذ", value=actor.mention if actor else "غير معروف — تحقق من صلاحية View Audit Log", inline=False)
+
     if added:
-        embed.add_field(name="رتب أُضيفت", value=", ".join(r.name for r in added)[:1024], inline=False)
+        added_lines = [f"✅ {role.mention}" for role in added]
+        embed.add_field(name="➕ الرتب الممنوحة", value="\\n".join(added_lines)[:1024], inline=False)
     if removed:
-        embed.add_field(name="رتب أُزيلت", value=", ".join(r.name for r in removed)[:1024], inline=False)
+        removed_lines = [f"❌ {role.mention}" for role in removed]
+        embed.add_field(name="➖ الرتب المسحوبة", value="\\n".join(removed_lines)[:1024], inline=False)
+
+    if reason and reason != "بدون سبب":
+        embed.add_field(name="📝 السبب", value=reason[:1024], inline=False)
+    embed.set_footer(text=f"Member ID: {after.id}")
     await send_configured_log(after.guild, "roles", embed)
 
 @bot.event
