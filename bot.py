@@ -4479,6 +4479,79 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
     def allowed(interaction):
         return interaction.user.id == owner_id or any(r.id == DECISION_ROLE_ID for r in getattr(interaction.user, "roles", []))
 
+    async def security_admin_action(interaction, target_id, action, label):
+        if not allowed(interaction):
+            await interaction.response.send_message("هذا الإجراء للمالك أو الرتبة المخوّلة فقط.", ephemeral=True)
+            return
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("يعمل هذا الإجراء داخل السيرفر فقط.", ephemeral=True)
+            return
+        member = guild.get_member(int(target_id))
+        if member is None:
+            await interaction.response.send_message("لم أستطع العثور على العضو المستهدف.", ephemeral=True)
+            return
+        if member.id == guild.owner_id:
+            await interaction.response.send_message("لا يمكن للبوت تنفيذ هذا الإجراء على مالك السيرفر.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        reason = f"FIFA VAULT security panel: {label}"[:480]
+        try:
+            if action == "timeout":
+                await member.timeout(datetime.timedelta(hours=1), reason=reason)
+                result_text = "تم تطبيق تايم ساعة واحدة."
+            else:
+                data = await read_state()
+                gs = guild_state(data, guild.id)
+                key = str(member.id)
+                if key not in gs["role_backups"]:
+                    gs["role_backups"][key] = [r.id for r in member.roles if not r.is_default()]
+                    await write_state(data)
+                removable = [r for r in member.roles if not r.is_default() and r.id != MEMBER_ROLE_ID and manageable(guild, r)]
+                if removable:
+                    await member.remove_roles(*removable, reason=reason)
+                if action == "jail":
+                    jail = guild.get_role(JAIL_ROLE_ID)
+                    if not jail or not manageable(guild, jail):
+                        raise RuntimeError("رتبة السجن غير موجودة أو أعلى من رتبة البوت.")
+                    if jail not in member.roles:
+                        await member.add_roles(jail, reason=reason)
+                    result_text = "تم سجن العضو مع إبقاء Member."
+                else:
+                    result_text = f"تم سحب {len(removable)} رتبة قابلة للإزالة مع إبقاء Member."
+            result = discord.Embed(title="🛡️ نتيجة الإجراء الإداري", description=f"{result_text}\nالمستهدف: {member.mention}\nالعملية الأصلية: {label}", color=discord.Color.dark_red(), timestamp=now())
+            result.add_field(name="نفّذ الإجراء", value=interaction.user.mention, inline=True)
+            await interaction.followup.send(embed=result, ephemeral=True)
+            await send_alert(guild, result)
+        except (discord.Forbidden, discord.HTTPException, RuntimeError) as exc:
+            await interaction.followup.send(f"تعذّر تنفيذ الإجراء: {exc}", ephemeral=True)
+
+    class SecurityActionView(discord.ui.View):
+        def __init__(self, guild_id, actor_id, label):
+            super().__init__(timeout=None)
+            self.guild_id, self.actor_id, self.label = guild_id, actor_id, label
+
+        @discord.ui.button(label="تايم 1 ساعة", style=discord.ButtonStyle.danger, emoji="⏱️")
+        async def timeout_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.guild and interaction.guild.id == self.guild_id:
+                await security_admin_action(interaction, self.actor_id, "timeout", self.label)
+            else:
+                await interaction.response.send_message("هذا الزر مرتبط بسيرفر آخر.", ephemeral=True)
+
+        @discord.ui.button(label="سجن", style=discord.ButtonStyle.danger, emoji="🔒")
+        async def jail_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.guild and interaction.guild.id == self.guild_id:
+                await security_admin_action(interaction, self.actor_id, "jail", self.label)
+            else:
+                await interaction.response.send_message("هذا الزر مرتبط بسيرفر آخر.", ephemeral=True)
+
+        @discord.ui.button(label="سحب الرتب", style=discord.ButtonStyle.danger, emoji="🧹")
+        async def roles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.guild and interaction.guild.id == self.guild_id:
+                await security_admin_action(interaction, self.actor_id, "roles", self.label)
+            else:
+                await interaction.response.send_message("هذا الزر مرتبط بسيرفر آخر.", ephemeral=True)
+
     class IncidentView(discord.ui.View):
         def __init__(self, incident_id, guild_id):
             super().__init__(timeout=DECISION_DELAY)
