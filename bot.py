@@ -4399,6 +4399,7 @@ def whitelisted(member):
 async def setup_security(bot, owner_id, load_server_config, save_server_config):
     pending_tasks = {}
     recent_deletes = defaultdict(list)
+    recent_security_actions = defaultdict(list)
 
     async def send_alert(guild, embed, view=None):
         data = await read_state()
@@ -4416,6 +4417,49 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             return True
         except (discord.Forbidden, discord.HTTPException, AttributeError):
             return False
+
+    async def activate_nuke(guild, reason):
+        """Enable emergency mode automatically and strip dangerous permissions the bot can manage."""
+        data = await read_state()
+        gs = guild_state(data, guild.id)
+        if gs.get("nuke_enabled"):
+            return False, 0, 0
+        gs["nuke_enabled"] = True
+        gs["nuke_started_at"] = now().isoformat()
+        gs["nuke_trigger"] = str(reason)[:500]
+        gs.setdefault("role_permissions_backup", {})
+        await write_state(data)
+
+        changed, failures = 0, 0
+        dangerous_permissions = (
+            "administrator", "manage_guild", "manage_roles", "manage_channels",
+            "ban_members", "kick_members", "create_instant_invite",
+            "manage_webhooks", "manage_messages", "manage_threads", "mention_everyone"
+        )
+        for role in sorted(guild.roles, key=lambda r: r.position):
+            if not manageable(guild, role):
+                continue
+            perms = role.permissions
+            if not any(getattr(perms, name, False) for name in dangerous_permissions):
+                continue
+            gs["role_permissions_backup"][str(role.id)] = int(perms.value)
+            await write_state(data)
+            for name in dangerous_permissions:
+                if hasattr(perms, name):
+                    setattr(perms, name, False)
+            try:
+                await role.edit(permissions=perms, reason=f"Automatic Nuke Mode: {str(reason)[:400]}")
+                changed += 1
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                failures += 1
+                print(f"[Security] auto-nuke could not edit role {role.id}: {exc}")
+        await write_state(data)
+        await send_alert(guild, discord.Embed(
+            title="🚨 تفعيل تلقائي لوضع Nuke Mode",
+            description=f"**السبب:** {str(reason)[:900]}\n**الرتب التي عُدلت:** {changed}\n**الرتب التي تعذر تعديلها:** {failures}\nتم تفعيل الحماية المشددة تلقائيًا. استخدم /unnuke بعد مراجعة الحادثة لاستعادة الصلاحيات المحفوظة.",
+            color=discord.Color.red(), timestamp=now()
+        ))
+        return True, changed, failures
 
     async def find_actor(guild, action, target_id=None):
         try:
@@ -4664,13 +4708,37 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
         gs["events"] = [e for e in gs["events"] if stamp - e.get("at", 0) <= 86400]
         emergency = bool(gs.get("nuke_enabled"))
         await write_state(data)
-        if is_delete:
+        trigger_category = None
+        if label.startswith("حذف روم:"):
+            trigger_category = "channel_delete"
+        elif label.startswith("حذف رتبة:"):
+            trigger_category = "role_delete"
+        elif label.startswith("حظر العضو "):
+            trigger_category = "ban"
+
+        if trigger_category:
+            action_key = (guild.id, actor.id, trigger_category)
+            recent_security_actions[action_key] = [
+                t for t in recent_security_actions[action_key]
+                if stamp - t <= DELETE_WINDOW
+            ]
+            recent_security_actions[action_key].append(stamp)
+            if len(recent_security_actions[action_key]) >= DELETE_THRESHOLD:
+                high_risk = True
+                label = f"اشتباه نيوك: {len(recent_security_actions[action_key])} عمليات من النوع نفسه خلال {DELETE_WINDOW} ثانية — {label}"
+                if not gs.get("nuke_enabled"):
+                    activated, changed, failures = await activate_nuke(
+                        guild, f"{len(recent_security_actions[action_key])} {trigger_category} actions by user {actor.id} within {DELETE_WINDOW}s"
+                    )
+                    if activated:
+                        print(f"[Security] auto Nuke Mode enabled in guild {guild.id}: changed={changed}, failures={failures}")
+                    latest = await read_state()
+                    gs = guild_state(latest, guild.id)
+                    emergency = bool(gs.get("nuke_enabled"))
+        elif is_delete:
             key2 = (guild.id, actor.id)
             recent_deletes[key2] = [t for t in recent_deletes[key2] if stamp - t <= DELETE_WINDOW]
             recent_deletes[key2].append(stamp)
-            if len(recent_deletes[key2]) >= DELETE_THRESHOLD:
-                high_risk = True
-                label = f"اشتباه نيوك: {len(recent_deletes[key2])} عمليات حذف خلال دقيقة — {label}"
         total = int(gs["scores"].get(str(actor.id), 0))
         remaining = max(0, 100-total)
         risk = min(100, total)
@@ -4872,8 +4940,8 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
 
     @bot.tree.command(name="unnuke", description="إيقاف الطوارئ واستعادة الصلاحيات المحفوظة")
     async def unnuke(interaction: discord.Interaction):
-        if interaction.user.id != owner_id:
-            await interaction.response.send_message("هذا الأمر متاح لك وحدك.", ephemeral=True)
+        if not allowed(interaction):
+            await interaction.response.send_message("هذا الأمر متاح للمالك أو الرتبة المخوّلة فقط.", ephemeral=True)
             return
         guild = interaction.guild
         if guild is None:
@@ -4913,6 +4981,91 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             await send_alert(guild, discord.Embed(title="🟢 انتهى وضع الطوارئ",
                 description=f"تمت استعادة {restored} رتبة؛ لم تتبقَّ رتب تحتاج إلى استعادة.", color=discord.Color.green(), timestamp=now()))
             await interaction.followup.send(f"تم إيقاف الطوارئ بنجاح. تمت استعادة {restored} رتبة.", ephemeral=True)
+
+    @bot.tree.command(name="security_status", description="عرض الحالة الأمنية الحالية للسيرفر")
+    async def security_status(interaction: discord.Interaction):
+        if not allowed(interaction):
+            await interaction.response.send_message("هذا الأمر متاح للمالك أو الرتبة المخوّلة فقط.", ephemeral=True)
+            return
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("هذا الأمر يعمل داخل السيرفر فقط.", ephemeral=True)
+            return
+
+        data = await read_state()
+        gs = guild_state(data, guild.id)
+        events = [event for event in gs.get("events", []) if isinstance(event, dict)]
+        scores = gs.get("scores", {})
+        nuke_enabled = bool(gs.get("nuke_enabled"))
+
+        penalty = 0
+        for event in events:
+            try:
+                points = max(0, int(event.get("points", 0)))
+            except (TypeError, ValueError):
+                points = 0
+            if points:
+                penalty += max(2, min(30, math.ceil(points / 5)))
+        security_percent = 0 if nuke_enabled else max(0, 100 - min(100, penalty))
+        security_icon = "🚨" if nuke_enabled or security_percent < 40 else "⚠️" if security_percent < 75 else "✅"
+        status_text = "🚨 وضع Nuke Mode مفعّل" if nuke_enabled else "🟢 الحماية تعمل — لا يوجد وضع طوارئ"
+
+        offenders = []
+        for user_id, raw_score in scores.items():
+            try:
+                score = int(raw_score)
+            except (TypeError, ValueError):
+                continue
+            if score > 0:
+                offenders.append((score, str(user_id)))
+        offenders.sort(reverse=True)
+        offender_lines = [
+            f"**{index}.** <@{user_id}> — **{score} نقطة**"
+            for index, (score, user_id) in enumerate(offenders[:5], start=1)
+        ]
+        offenders_text = "\n".join(offender_lines) if offender_lines else "لا توجد مخالفات مسجلة ✅"
+        if len(offenders) > 5:
+            offenders_text += f"\n… وهناك **{len(offenders) - 5}** مخالفين آخرين."
+
+        def event_sort_key(event):
+            try:
+                points = int(event.get("points", 0))
+            except (TypeError, ValueError):
+                points = 0
+            try:
+                event_time = float(event.get("at", 0))
+            except (TypeError, ValueError):
+                event_time = 0
+            return points, event_time
+
+        worst_events = sorted(events, key=event_sort_key, reverse=True)[:5]
+        worst_lines = []
+        for index, event in enumerate(worst_events, start=1):
+            try:
+                points = int(event.get("points", 0))
+            except (TypeError, ValueError):
+                points = 0
+            actor_id = event.get("actor_id")
+            action = str(event.get("kind", "عملية غير معروفة"))[:180]
+            try:
+                when_text = datetime.datetime.fromtimestamp(float(event.get("at", 0)), datetime.timezone.utc).strftime("%m-%d %H:%M UTC")
+            except (TypeError, ValueError, OSError, OverflowError):
+                when_text = "وقت غير متاح"
+            actor_text = f"<@{actor_id}>" if actor_id else "فاعل غير معروف"
+            worst_lines.append(f"**{index}.** {action}\nالفاعل: {actor_text} • **{points} نقطة** • {when_text}")
+        worst_text = "\n".join(worst_lines) if worst_lines else "لا توجد إجراءات مسجلة خلال آخر 24 ساعة."
+
+        embed = discord.Embed(
+            title="🛡️ FIFA VAULT | الحالة الأمنية",
+            description=f"**أمان السيرفر: {security_icon} {security_percent}%**\n{status_text}",
+            color=discord.Color.red() if nuke_enabled or security_percent < 40 else discord.Color.orange() if security_percent < 75 else discord.Color.green(),
+            timestamp=now()
+        )
+        embed.add_field(name=f"👥 المخالفون ({len(offenders)})", value=offenders_text[:1024], inline=False)
+        embed.add_field(name="⚠️ أخطر 5 إجراءات", value=worst_text[:1024], inline=False)
+        embed.add_field(name="📡 ملخص الحماية", value=f"الحوادث المسجلة خلال آخر 24 ساعة: **{len(events)}**\nوضع الطوارئ: **{'مفعّل' if nuke_enabled else 'غير مفعّل'}**", inline=False)
+        embed.set_footer(text="FIFA VAULT SECURITY • النسبة محسوبة من سجل الحوادث المحفوظ")
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @bot.command(name="إرجاع")
     async def restore_command(ctx, member: discord.Member):
