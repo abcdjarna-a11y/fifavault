@@ -4821,6 +4821,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
     bot.add_listener(on_member_ban, "on_member_ban")
     bot.add_listener(on_member_remove, "on_member_remove")
     print("[Security] protection listeners and slash commands registered.")
+    # Professional security log UI patch will be added in this branch.
 
 
 async def main():
