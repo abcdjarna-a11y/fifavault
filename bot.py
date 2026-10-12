@@ -4701,11 +4701,11 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
 
     async def on_channel_delete(channel):
         actor, entry = await find_actor(channel.guild, discord.AuditLogAction.channel_delete, channel.id)
-        await record(channel.guild, actor, entry, f"حذف روم: {channel.name}", 100, True, True)
+        await record(channel.guild, actor, entry, f"حذف روم: {channel.name}", 100, True, True, target=channel, details=f"الروم المحذوف: {channel.name} ({channel.id})")
 
     async def on_role_delete(role):
         actor, entry = await find_actor(role.guild, discord.AuditLogAction.role_delete, role.id)
-        await record(role.guild, actor, entry, f"حذف رتبة: {role.name}", 100, True, True)
+        await record(role.guild, actor, entry, f"حذف رتبة: {role.name}", 100, True, True, target=role, details=f"الرتبة المحذوفة: {role.name} ({role.id})")
 
     async def on_channel_create(channel):
         actor, entry = await find_actor(channel.guild, discord.AuditLogAction.channel_create, channel.id)
