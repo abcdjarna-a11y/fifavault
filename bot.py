@@ -4768,7 +4768,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
 
     async def on_member_ban(guild, user):
         actor, entry = await find_actor(guild, discord.AuditLogAction.ban, user.id)
-        await record(guild, actor, entry, f"حظر العضو {user}", 100, True)
+        await record(guild, actor, entry, f"حظر العضو {user}", 100, True, target=user, details=f"المستهدف: {user} ({user.id})")
 
     async def on_member_remove(member):
         actor, entry = await find_actor(member.guild, discord.AuditLogAction.kick, member.id)
