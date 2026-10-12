@@ -4709,7 +4709,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
 
     async def on_channel_create(channel):
         actor, entry = await find_actor(channel.guild, discord.AuditLogAction.channel_create, channel.id)
-        await record(channel.guild, actor, entry, f"إنشاء روم: {channel.name}", 50)
+        await record(channel.guild, actor, entry, f"إنشاء روم: {channel.name}", 50, target=channel, details=f"الروم الجديد: {channel.name} ({channel.id})")
 
     async def on_role_create(role):
         actor, entry = await find_actor(role.guild, discord.AuditLogAction.role_create, role.id)
