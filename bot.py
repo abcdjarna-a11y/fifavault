@@ -4739,7 +4739,12 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
         if after_timeout and (before_timeout is None or after_timeout > before_timeout):
             timeout_actor, timeout_entry = await find_actor(after.guild, discord.AuditLogAction.member_update, after.id)
             if timeout_entry:
-                await record(after.guild, timeout_actor, timeout_entry, f"تايم آوت للعضو {after.display_name}", 10)
+                seconds = max(0, int((after_timeout - now()).total_seconds()))
+                hours, rem = divmod(seconds, 3600)
+                minutes = rem // 60
+                duration = f"{hours} ساعة و{minutes} دقيقة" if hours else f"{minutes} دقيقة"
+                await record(after.guild, timeout_actor, timeout_entry, f"تايم آوت للعضو {after.display_name}", 10,
+                             target=after, details=f"مدة التايم المتبقية وقت الرصد: {duration}؛ ينتهي في: {after_timeout.isoformat()}")
 
         old_ids = {r.id for r in before.roles}
         added = [r for r in after.roles if r.id not in old_ids and not r.is_default()]
