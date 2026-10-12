@@ -4646,21 +4646,21 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
                 print(f"[Security] incident failed: {exc}")
         pending_tasks[incident_id] = asyncio.create_task(delayed())
 
-    async def record(guild, actor, entry, label, points, high_risk=False, is_delete=False):
+    async def record(guild, actor, entry, label, points, high_risk=False, is_delete=False, target=None, details=None):
         if not isinstance(actor, discord.Member) or actor.bot or entry is None:
             return
         data = await read_state()
         gs = guild_state(data, guild.id)
-        entry_id = str(entry.id)
+        entry_id = f"{entry.id}:{label}"
         if entry_id in gs["processed_audit_ids"]:
             return
         gs["processed_audit_ids"].append(entry_id)
-        gs["processed_audit_ids"] = gs["processed_audit_ids"][-500:]
+        gs["processed_audit_ids"] = gs["processed_audit_ids"][-1000:]
         key = str(actor.id)
         previous_total = int(gs["scores"].get(key, 0))
         gs["scores"][key] = previous_total + points
         stamp = now().timestamp()
-        gs["events"].append({"actor_id": actor.id, "kind": label, "at": stamp, "points": points})
+        gs["events"].append({"actor_id": actor.id, "target_id": getattr(target, "id", None), "kind": label, "at": stamp, "points": points})
         gs["events"] = [e for e in gs["events"] if stamp - e.get("at", 0) <= 86400]
         emergency = bool(gs.get("nuke_enabled"))
         await write_state(data)
@@ -4670,11 +4670,32 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             recent_deletes[key2].append(stamp)
             if len(recent_deletes[key2]) >= DELETE_THRESHOLD:
                 high_risk = True
-                label = f"اشتباه نيوك: {len(recent_deletes[key2])} عمليات حذف خلال دقيقة"
-        # In emergency mode, high-risk confirmed actions become automatic-ban incidents.
-        force_ban = emergency and high_risk
+                label = f"اشتباه نيوك: {len(recent_deletes[key2])} عمليات حذف خلال دقيقة — {label}"
         total = int(gs["scores"].get(str(actor.id), 0))
+        remaining = max(0, 100-total)
+        risk = min(100, total)
+        risk_label = "حرج جدًا" if risk >= 100 else "مرتفع" if risk >= 70 else "متوسط" if risk >= 40 else "منخفض"
+        reason = getattr(entry, "reason", None) or "لم يذكر Discord سببًا في سجل التدقيق"
+        target_text = getattr(target, "mention", str(target) if target is not None else "غير محدد")
+        if target is not None and getattr(target, "id", None):
+            target_text += f"\n{target.id}"
+        embed = discord.Embed(title="🔴 FIFA VAULT | سجل أمني",
+            description="تم رصد عملية إدارية داخل السيرفر.",
+            color=discord.Color.from_rgb(139, 0, 0), timestamp=now())
+        embed.add_field(name="👤 الفاعل", value=f"{actor.mention}\n{actor.id}", inline=True)
+        embed.add_field(name="🎯 المفعول به", value=target_text[:1024], inline=True)
+        embed.add_field(name="⚙️ الفعل", value=label[:1024], inline=False)
+        if details:
+            embed.add_field(name="📋 تفاصيل العملية", value=str(details)[:1024], inline=False)
+        embed.add_field(name="📝 السبب", value=str(reason)[:1024], inline=False)
+        embed.add_field(name="➕ نقاط العملية", value=f"+{points}", inline=True)
+        embed.add_field(name="📊 مجموع النقاط", value=f"{total}/100", inline=True)
+        embed.add_field(name="🧯 المتبقي للحد", value=f"{remaining} نقطة", inline=True)
+        embed.add_field(name="🌡️ نسبة الخطورة", value=f"{risk}% — {risk_label}", inline=True)
+        embed.set_footer(text=f"FIFA VAULT SECURITY • Audit #{entry.id}")
+        await send_alert(guild, embed, SecurityActionView(guild.id, actor.id, label))
         crossed_threshold = previous_total < 100 <= total
+        force_ban = emergency and high_risk
         if crossed_threshold or high_risk or (emergency and points >= 50):
             await make_incident(guild, actor, label, points, force_ban=force_ban)
 
