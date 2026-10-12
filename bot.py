@@ -4717,7 +4717,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             "administrator", "manage_guild", "manage_roles", "manage_channels",
             "ban_members", "kick_members", "manage_webhooks", "manage_messages", "mention_everyone"
         ))
-        await record(role.guild, actor, entry, f"إنشاء رتبة: {role.name}", 50, dangerous)
+        await record(role.guild, actor, entry, f"إنشاء رتبة: {role.name}", 50, dangerous, target=role, details=f"الرتبة: {role.name}؛ الصلاحيات المفعّلة: {role.permissions}")
 
     async def on_role_update(before, after):
         if before.permissions == after.permissions:
