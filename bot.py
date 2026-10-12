@@ -4747,16 +4747,24 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
                              target=after, details=f"مدة التايم المتبقية وقت الرصد: {duration}؛ ينتهي في: {after_timeout.isoformat()}")
 
         old_ids = {r.id for r in before.roles}
+        new_ids = {r.id for r in after.roles}
         added = [r for r in after.roles if r.id not in old_ids and not r.is_default()]
-        if not added:
-            return
-        actor, entry = await find_actor(after.guild, discord.AuditLogAction.member_role_update, after.id)
-        if not entry:
-            return
-        for role in added:
-            dangerous = any((role.permissions.administrator, role.permissions.manage_guild, role.permissions.manage_roles,
-                             role.permissions.manage_channels, role.permissions.ban_members, role.permissions.kick_members))
-            await record(after.guild, actor, entry, f"منح رتبة {role.name} للعضو {after.display_name}", 50 if dangerous else 5, dangerous)
+        removed = [r for r in before.roles if r.id not in new_ids and not r.is_default()]
+        if added or removed:
+            actor, entry = await find_actor(after.guild, discord.AuditLogAction.member_role_update, after.id)
+            if entry:
+                details = []
+                if added:
+                    details.append("الرتب الممنوحة: " + ", ".join(r.name for r in added))
+                if removed:
+                    details.append("الرتب المسحوبة: " + ", ".join(r.name for r in removed))
+                dangerous = any(any((r.permissions.administrator, r.permissions.manage_guild, r.permissions.manage_roles,
+                                     r.permissions.manage_channels, r.permissions.ban_members, r.permissions.kick_members)) for r in added)
+                points = sum(50 if any((r.permissions.administrator, r.permissions.manage_guild, r.permissions.manage_roles,
+                                        r.permissions.manage_channels, r.permissions.ban_members, r.permissions.kick_members)) else 5 for r in added)
+                points += 5 * len(removed)
+                await record(after.guild, actor, entry, "تغيير رتب عضو", points or 5, dangerous,
+                             target=after, details="؛ ".join(details))
 
     async def on_member_ban(guild, user):
         actor, entry = await find_actor(guild, discord.AuditLogAction.ban, user.id)
