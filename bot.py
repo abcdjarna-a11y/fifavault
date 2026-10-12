@@ -4773,7 +4773,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
     async def on_member_remove(member):
         actor, entry = await find_actor(member.guild, discord.AuditLogAction.kick, member.id)
         if entry:
-            await record(member.guild, actor, entry, f"طرد العضو {member}", 100, True)
+            await record(member.guild, actor, entry, f"طرد العضو {member}", 100, True, target=member, details=f"المستهدف: {member} ({member.id})")
 
     group = app_commands.Group(name="set_security", description="إعدادات نظام الحماية")
 
