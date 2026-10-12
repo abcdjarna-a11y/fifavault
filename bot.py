@@ -4479,6 +4479,79 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
     def allowed(interaction):
         return interaction.user.id == owner_id or any(r.id == DECISION_ROLE_ID for r in getattr(interaction.user, "roles", []))
 
+    async def security_admin_action(interaction, target_id, action, label):
+        if not allowed(interaction):
+            await interaction.response.send_message("هذا الإجراء للمالك أو الرتبة المخوّلة فقط.", ephemeral=True)
+            return
+        guild = interaction.guild
+        if guild is None:
+            await interaction.response.send_message("يعمل هذا الإجراء داخل السيرفر فقط.", ephemeral=True)
+            return
+        member = guild.get_member(int(target_id))
+        if member is None:
+            await interaction.response.send_message("لم أستطع العثور على العضو المستهدف.", ephemeral=True)
+            return
+        if member.id == guild.owner_id:
+            await interaction.response.send_message("لا يمكن للبوت تنفيذ هذا الإجراء على مالك السيرفر.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        reason = f"FIFA VAULT security panel: {label}"[:480]
+        try:
+            if action == "timeout":
+                await member.timeout(datetime.timedelta(hours=1), reason=reason)
+                result_text = "تم تطبيق تايم ساعة واحدة."
+            else:
+                data = await read_state()
+                gs = guild_state(data, guild.id)
+                key = str(member.id)
+                if key not in gs["role_backups"]:
+                    gs["role_backups"][key] = [r.id for r in member.roles if not r.is_default()]
+                    await write_state(data)
+                removable = [r for r in member.roles if not r.is_default() and r.id != MEMBER_ROLE_ID and manageable(guild, r)]
+                if removable:
+                    await member.remove_roles(*removable, reason=reason)
+                if action == "jail":
+                    jail = guild.get_role(JAIL_ROLE_ID)
+                    if not jail or not manageable(guild, jail):
+                        raise RuntimeError("رتبة السجن غير موجودة أو أعلى من رتبة البوت.")
+                    if jail not in member.roles:
+                        await member.add_roles(jail, reason=reason)
+                    result_text = "تم سجن العضو مع إبقاء Member."
+                else:
+                    result_text = f"تم سحب {len(removable)} رتبة قابلة للإزالة مع إبقاء Member."
+            result = discord.Embed(title="🛡️ نتيجة الإجراء الإداري", description=f"{result_text}\nالمستهدف: {member.mention}\nالعملية الأصلية: {label}", color=discord.Color.dark_red(), timestamp=now())
+            result.add_field(name="نفّذ الإجراء", value=interaction.user.mention, inline=True)
+            await interaction.followup.send(embed=result, ephemeral=True)
+            await send_alert(guild, result)
+        except (discord.Forbidden, discord.HTTPException, RuntimeError) as exc:
+            await interaction.followup.send(f"تعذّر تنفيذ الإجراء: {exc}", ephemeral=True)
+
+    class SecurityActionView(discord.ui.View):
+        def __init__(self, guild_id, actor_id, label):
+            super().__init__(timeout=None)
+            self.guild_id, self.actor_id, self.label = guild_id, actor_id, label
+
+        @discord.ui.button(label="تايم 1 ساعة", style=discord.ButtonStyle.danger, emoji="⏱️")
+        async def timeout_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.guild and interaction.guild.id == self.guild_id:
+                await security_admin_action(interaction, self.actor_id, "timeout", self.label)
+            else:
+                await interaction.response.send_message("هذا الزر مرتبط بسيرفر آخر.", ephemeral=True)
+
+        @discord.ui.button(label="سجن", style=discord.ButtonStyle.danger, emoji="🔒")
+        async def jail_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.guild and interaction.guild.id == self.guild_id:
+                await security_admin_action(interaction, self.actor_id, "jail", self.label)
+            else:
+                await interaction.response.send_message("هذا الزر مرتبط بسيرفر آخر.", ephemeral=True)
+
+        @discord.ui.button(label="سحب الرتب", style=discord.ButtonStyle.danger, emoji="🧹")
+        async def roles_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+            if interaction.guild and interaction.guild.id == self.guild_id:
+                await security_admin_action(interaction, self.actor_id, "roles", self.label)
+            else:
+                await interaction.response.send_message("هذا الزر مرتبط بسيرفر آخر.", ephemeral=True)
+
     class IncidentView(discord.ui.View):
         def __init__(self, incident_id, guild_id):
             super().__init__(timeout=DECISION_DELAY)
@@ -4573,21 +4646,21 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
                 print(f"[Security] incident failed: {exc}")
         pending_tasks[incident_id] = asyncio.create_task(delayed())
 
-    async def record(guild, actor, entry, label, points, high_risk=False, is_delete=False):
+    async def record(guild, actor, entry, label, points, high_risk=False, is_delete=False, target=None, details=None):
         if not isinstance(actor, discord.Member) or actor.bot or entry is None:
             return
         data = await read_state()
         gs = guild_state(data, guild.id)
-        entry_id = str(entry.id)
+        entry_id = f"{entry.id}:{label}"
         if entry_id in gs["processed_audit_ids"]:
             return
         gs["processed_audit_ids"].append(entry_id)
-        gs["processed_audit_ids"] = gs["processed_audit_ids"][-500:]
+        gs["processed_audit_ids"] = gs["processed_audit_ids"][-1000:]
         key = str(actor.id)
         previous_total = int(gs["scores"].get(key, 0))
         gs["scores"][key] = previous_total + points
         stamp = now().timestamp()
-        gs["events"].append({"actor_id": actor.id, "kind": label, "at": stamp, "points": points})
+        gs["events"].append({"actor_id": actor.id, "target_id": getattr(target, "id", None), "kind": label, "at": stamp, "points": points})
         gs["events"] = [e for e in gs["events"] if stamp - e.get("at", 0) <= 86400]
         emergency = bool(gs.get("nuke_enabled"))
         await write_state(data)
@@ -4597,25 +4670,46 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             recent_deletes[key2].append(stamp)
             if len(recent_deletes[key2]) >= DELETE_THRESHOLD:
                 high_risk = True
-                label = f"اشتباه نيوك: {len(recent_deletes[key2])} عمليات حذف خلال دقيقة"
-        # In emergency mode, high-risk confirmed actions become automatic-ban incidents.
-        force_ban = emergency and high_risk
+                label = f"اشتباه نيوك: {len(recent_deletes[key2])} عمليات حذف خلال دقيقة — {label}"
         total = int(gs["scores"].get(str(actor.id), 0))
+        remaining = max(0, 100-total)
+        risk = min(100, total)
+        risk_label = "حرج جدًا" if risk >= 100 else "مرتفع" if risk >= 70 else "متوسط" if risk >= 40 else "منخفض"
+        reason = getattr(entry, "reason", None) or "لم يذكر Discord سببًا في سجل التدقيق"
+        target_text = getattr(target, "mention", str(target) if target is not None else "غير محدد")
+        if target is not None and getattr(target, "id", None):
+            target_text += f"\n{target.id}"
+        embed = discord.Embed(title="🔴 FIFA VAULT | سجل أمني",
+            description="تم رصد عملية إدارية داخل السيرفر.",
+            color=discord.Color.from_rgb(139, 0, 0), timestamp=now())
+        embed.add_field(name="👤 الفاعل", value=f"{actor.mention}\n{actor.id}", inline=True)
+        embed.add_field(name="🎯 المفعول به", value=target_text[:1024], inline=True)
+        embed.add_field(name="⚙️ الفعل", value=label[:1024], inline=False)
+        if details:
+            embed.add_field(name="📋 تفاصيل العملية", value=str(details)[:1024], inline=False)
+        embed.add_field(name="📝 السبب", value=str(reason)[:1024], inline=False)
+        embed.add_field(name="➕ نقاط العملية", value=f"+{points}", inline=True)
+        embed.add_field(name="📊 مجموع النقاط", value=f"{total}/100", inline=True)
+        embed.add_field(name="🧯 المتبقي للحد", value=f"{remaining} نقطة", inline=True)
+        embed.add_field(name="🌡️ نسبة الخطورة", value=f"{risk}% — {risk_label}", inline=True)
+        embed.set_footer(text=f"FIFA VAULT SECURITY • Audit #{entry.id}")
+        await send_alert(guild, embed, SecurityActionView(guild.id, actor.id, label))
         crossed_threshold = previous_total < 100 <= total
+        force_ban = emergency and high_risk
         if crossed_threshold or high_risk or (emergency and points >= 50):
             await make_incident(guild, actor, label, points, force_ban=force_ban)
 
     async def on_channel_delete(channel):
         actor, entry = await find_actor(channel.guild, discord.AuditLogAction.channel_delete, channel.id)
-        await record(channel.guild, actor, entry, f"حذف روم: {channel.name}", 100, True, True)
+        await record(channel.guild, actor, entry, f"حذف روم: {channel.name}", 100, True, True, target=channel, details=f"الروم المحذوف: {channel.name} ({channel.id})")
 
     async def on_role_delete(role):
         actor, entry = await find_actor(role.guild, discord.AuditLogAction.role_delete, role.id)
-        await record(role.guild, actor, entry, f"حذف رتبة: {role.name}", 100, True, True)
+        await record(role.guild, actor, entry, f"حذف رتبة: {role.name}", 100, True, True, target=role, details=f"الرتبة المحذوفة: {role.name} ({role.id})")
 
     async def on_channel_create(channel):
         actor, entry = await find_actor(channel.guild, discord.AuditLogAction.channel_create, channel.id)
-        await record(channel.guild, actor, entry, f"إنشاء روم: {channel.name}", 50)
+        await record(channel.guild, actor, entry, f"إنشاء روم: {channel.name}", 50, target=channel, details=f"الروم الجديد: {channel.name} ({channel.id})")
 
     async def on_role_create(role):
         actor, entry = await find_actor(role.guild, discord.AuditLogAction.role_create, role.id)
@@ -4623,7 +4717,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             "administrator", "manage_guild", "manage_roles", "manage_channels",
             "ban_members", "kick_members", "manage_webhooks", "manage_messages", "mention_everyone"
         ))
-        await record(role.guild, actor, entry, f"إنشاء رتبة: {role.name}", 50, dangerous)
+        await record(role.guild, actor, entry, f"إنشاء رتبة: {role.name}", 50, dangerous, target=role, details=f"الرتبة: {role.name}؛ الصلاحيات المفعّلة: {role.permissions}")
 
     async def on_role_update(before, after):
         if before.permissions == after.permissions:
@@ -4637,7 +4731,11 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             getattr(after.permissions, name, False) and not getattr(before.permissions, name, False)
             for name in critical_permissions
         )
-        await record(after.guild, actor, entry, f"تعديل صلاحيات رتبة: {after.name}", 100 if dangerous else 50, dangerous)
+        gained = [name for name, value in after.permissions if value and not getattr(before.permissions, name, False)]
+        lost = [name for name, value in before.permissions if value and not getattr(after.permissions, name, False)]
+        details = f"الرتبة: {after.name}\nالصلاحيات المضافة: {', '.join(gained[:20]) or 'لا يوجد'}\nالصلاحيات المسحوبة: {', '.join(lost[:20]) or 'لا يوجد'}"
+        await record(after.guild, actor, entry, f"تعديل صلاحيات رتبة: {after.name}", 100 if dangerous else 50,
+                     dangerous, target=after, details=details)
 
     async def on_member_update(before, after):
         before_timeout = getattr(before, "communication_disabled_until", None)
@@ -4645,28 +4743,41 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
         if after_timeout and (before_timeout is None or after_timeout > before_timeout):
             timeout_actor, timeout_entry = await find_actor(after.guild, discord.AuditLogAction.member_update, after.id)
             if timeout_entry:
-                await record(after.guild, timeout_actor, timeout_entry, f"تايم آوت للعضو {after.display_name}", 10)
+                seconds = max(0, int((after_timeout - now()).total_seconds()))
+                hours, rem = divmod(seconds, 3600)
+                minutes = rem // 60
+                duration = f"{hours} ساعة و{minutes} دقيقة" if hours else f"{minutes} دقيقة"
+                await record(after.guild, timeout_actor, timeout_entry, f"تايم آوت للعضو {after.display_name}", 10,
+                             target=after, details=f"مدة التايم المتبقية وقت الرصد: {duration}؛ ينتهي في: {after_timeout.isoformat()}")
 
         old_ids = {r.id for r in before.roles}
+        new_ids = {r.id for r in after.roles}
         added = [r for r in after.roles if r.id not in old_ids and not r.is_default()]
-        if not added:
-            return
-        actor, entry = await find_actor(after.guild, discord.AuditLogAction.member_role_update, after.id)
-        if not entry:
-            return
-        for role in added:
-            dangerous = any((role.permissions.administrator, role.permissions.manage_guild, role.permissions.manage_roles,
-                             role.permissions.manage_channels, role.permissions.ban_members, role.permissions.kick_members))
-            await record(after.guild, actor, entry, f"منح رتبة {role.name} للعضو {after.display_name}", 50 if dangerous else 5, dangerous)
+        removed = [r for r in before.roles if r.id not in new_ids and not r.is_default()]
+        if added or removed:
+            actor, entry = await find_actor(after.guild, discord.AuditLogAction.member_role_update, after.id)
+            if entry:
+                details = []
+                if added:
+                    details.append("الرتب الممنوحة: " + ", ".join(r.name for r in added))
+                if removed:
+                    details.append("الرتب المسحوبة: " + ", ".join(r.name for r in removed))
+                dangerous = any(any((r.permissions.administrator, r.permissions.manage_guild, r.permissions.manage_roles,
+                                     r.permissions.manage_channels, r.permissions.ban_members, r.permissions.kick_members)) for r in added)
+                points = sum(50 if any((r.permissions.administrator, r.permissions.manage_guild, r.permissions.manage_roles,
+                                        r.permissions.manage_channels, r.permissions.ban_members, r.permissions.kick_members)) else 5 for r in added)
+                points += 5 * len(removed)
+                await record(after.guild, actor, entry, "تغيير رتب عضو", points or 5, dangerous,
+                             target=after, details="؛ ".join(details))
 
     async def on_member_ban(guild, user):
         actor, entry = await find_actor(guild, discord.AuditLogAction.ban, user.id)
-        await record(guild, actor, entry, f"حظر العضو {user}", 100, True)
+        await record(guild, actor, entry, f"حظر العضو {user}", 100, True, target=user, details=f"المستهدف: {user} ({user.id})")
 
     async def on_member_remove(member):
         actor, entry = await find_actor(member.guild, discord.AuditLogAction.kick, member.id)
         if entry:
-            await record(member.guild, actor, entry, f"طرد العضو {member}", 100, True)
+            await record(member.guild, actor, entry, f"طرد العضو {member}", 100, True, target=member, details=f"المستهدف: {member} ({member.id})")
 
     group = app_commands.Group(name="set_security", description="إعدادات نظام الحماية")
 
@@ -4821,6 +4932,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
     bot.add_listener(on_member_ban, "on_member_ban")
     bot.add_listener(on_member_remove, "on_member_remove")
     print("[Security] protection listeners and slash commands registered.")
+    # Professional security log UI patch will be added in this branch.
 
 
 async def main():
