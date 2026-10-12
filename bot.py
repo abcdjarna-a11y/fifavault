@@ -4731,7 +4731,11 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             getattr(after.permissions, name, False) and not getattr(before.permissions, name, False)
             for name in critical_permissions
         )
-        await record(after.guild, actor, entry, f"تعديل صلاحيات رتبة: {after.name}", 100 if dangerous else 50, dangerous)
+        gained = [name for name, value in after.permissions if value and not getattr(before.permissions, name, False)]
+        lost = [name for name, value in before.permissions if value and not getattr(after.permissions, name, False)]
+        details = f"الرتبة: {after.name}\nالصلاحيات المضافة: {', '.join(gained[:20]) or 'لا يوجد'}\nالصلاحيات المسحوبة: {', '.join(lost[:20]) or 'لا يوجد'}"
+        await record(after.guild, actor, entry, f"تعديل صلاحيات رتبة: {after.name}", 100 if dangerous else 50,
+                     dangerous, target=after, details=details)
 
     async def on_member_update(before, after):
         before_timeout = getattr(before, "communication_disabled_until", None)
