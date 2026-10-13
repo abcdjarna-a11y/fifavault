@@ -4847,6 +4847,82 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
         if entry:
             await record(member.guild, actor, entry, f"طرد العضو {member}", 100, True, target=member, details=f"المستهدف: {member} ({member.id})")
 
+    async def on_member_join(member):
+        # Only inspect bots on the exact join event; existing bots are never swept during Nuke Mode.
+        if not member.bot:
+            return
+
+        guild = member.guild
+        actor, entry = None, None
+        # Audit-log entries can arrive shortly after the member-join event.
+        for attempt in range(4):
+            actor, entry = await find_actor(guild, discord.AuditLogAction.bot_add, member.id)
+            if entry:
+                break
+            if attempt < 3:
+                await asyncio.sleep(1.0)
+
+        # Re-read state after waiting, so a newly activated emergency is respected.
+        data = await read_state()
+        gs = guild_state(data, guild.id)
+        nuke_enabled = bool(gs.get("nuke_enabled"))
+        nuke_started_at = gs.get("nuke_started_at")
+        joined_during_nuke = nuke_enabled
+        if nuke_enabled and nuke_started_at and member.joined_at:
+            try:
+                started_at = datetime.datetime.fromisoformat(str(nuke_started_at).replace("Z", "+00:00"))
+                joined_at = member.joined_at
+                if joined_at.tzinfo is None:
+                    joined_at = joined_at.replace(tzinfo=datetime.timezone.utc)
+                if started_at.tzinfo is None:
+                    started_at = started_at.replace(tzinfo=datetime.timezone.utc)
+                joined_during_nuke = joined_at >= started_at
+            except (TypeError, ValueError, OverflowError):
+                # If the saved timestamp is malformed, fail safely while emergency mode is active.
+                joined_during_nuke = True
+
+        if joined_during_nuke:
+            reason = "Nuke Mode: رفض أي بوت جديد ينضم أثناء وضع الطوارئ."
+            outcome = "تم حظر البوت الجديد بسبب وضع الطوارئ، بغض النظر عمّن أضافه."
+        else:
+            actor_roles = getattr(actor, "roles", []) if actor else []
+            authorized = bool(actor and (
+                actor.id == owner_id
+                or any(getattr(role, "id", None) == DECISION_ROLE_ID for role in actor_roles)
+                or any(getattr(role, "id", None) == WHITELIST_ROLE_ID for role in actor_roles)
+            ))
+            if authorized:
+                return
+            if actor is None:
+                reason = "Security: تعذر التحقق من هوية من أضاف البوت من سجل التدقيق."
+                outcome = "لم يمكن التحقق من المُضيف؛ تمت معاملة البوت كإضافة غير مصرّح بها."
+            else:
+                reason = f"Security: إضافة البوت غير مسموحة للمُضيف {actor.id}."
+                outcome = f"تم رفض البوت لأن المُضيف {actor.mention} لا يملك صلاحية إضافته."
+
+        action_result = "تعذّر إزالته"
+        try:
+            # Banning also removes the bot from the server. If ban is unavailable,
+            # fall back to kicking it so an unauthorized bot is still removed when possible.
+            await guild.ban(member, reason=reason[:480])
+            action_result = "تم الحظر والإزالة من السيرفر"
+        except (discord.Forbidden, discord.HTTPException) as ban_error:
+            print(f"[Security] Could not ban newly joined bot {member.id} in {guild.id}: {ban_error}")
+            try:
+                await member.kick(reason=(reason + " (تعذر الحظر، تم استخدام الطرد كبديل)")[:480])
+                action_result = "تعذر الحظر؛ تم الطرد"
+            except (discord.Forbidden, discord.HTTPException) as kick_error:
+                print(f"[Security] Could not kick newly joined bot {member.id} in {guild.id}: {kick_error}")
+
+        print(f"[Security] New bot check: guild={guild.id}, bot={member.id}, actor={getattr(actor, 'id', None)}, emergency={joined_during_nuke}, result={action_result}")
+        embed = discord.Embed(
+            title="🤖 إجراء حماية ضد بوت جديد",
+            description=f"**البوت:** {member} ({member.id})\n**النتيجة:** {action_result}\n**السبب:** {outcome}\n**المُضيف:** {actor.mention if actor else 'غير معروف'}",
+            color=discord.Color.red(),
+            timestamp=now()
+        )
+        await send_alert(guild, embed)
+
     group = app_commands.Group(name="set_security", description="إعدادات نظام الحماية")
 
     @group.command(name="room", description="تعيين روم تنبيهات الحماية")
@@ -5082,6 +5158,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
     bot.add_listener(on_role_create, "on_guild_role_create")
     bot.add_listener(on_role_update, "on_guild_role_update")
     bot.add_listener(on_member_update, "on_member_update")
+    bot.add_listener(on_member_join, "on_member_join")
     bot.add_listener(on_member_ban, "on_member_ban")
     bot.add_listener(on_member_remove, "on_member_remove")
     print("[Security] protection listeners and slash commands registered.")
