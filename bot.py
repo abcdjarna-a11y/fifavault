@@ -4909,7 +4909,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
         except (discord.Forbidden, discord.HTTPException) as ban_error:
             print(f"[Security] Could not ban newly joined bot {member.id} in {guild.id}: {ban_error}")
             try:
-                await guild.kick(member, reason=(reason + " (تعذر الحظر، تم استخدام الطرد كبديل)")[:480])
+                await member.kick(reason=(reason + " (تعذر الحظر، تم استخدام الطرد كبديل)")[:480])
                 action_result = "تعذر الحظر؛ تم الطرد"
             except (discord.Forbidden, discord.HTTPException) as kick_error:
                 print(f"[Security] Could not kick newly joined bot {member.id} in {guild.id}: {kick_error}")
@@ -4917,7 +4917,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
         print(f"[Security] New bot check: guild={guild.id}, bot={member.id}, actor={getattr(actor, 'id', None)}, emergency={joined_during_nuke}, result={action_result}")
         embed = discord.Embed(
             title="🤖 إجراء حماية ضد بوت جديد",
-            description=f"**البوت:** {member} ({member.id})\\n**النتيجة:** {action_result}\\n**السبب:** {outcome}\\n**المُضيف:** {actor.mention if actor else 'غير معروف'}",
+            description=f"**البوت:** {member} ({member.id})\n**النتيجة:** {action_result}\n**السبب:** {outcome}\n**المُضيف:** {actor.mention if actor else 'غير معروف'}",
             color=discord.Color.red(),
             timestamp=now()
         )
