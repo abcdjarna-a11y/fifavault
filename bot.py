@@ -2055,22 +2055,22 @@ async def set_roleslog(interaction: discord.Interaction, channel: discord.TextCh
 @bot.event
 async def on_ready():
     print(f"✅ Bot Online as: {bot.user}")
+    # Register globally, and copy/sync commands to each connected guild for immediate visibility.
     try:
-        # Publish globally, then sync to each connected server so new commands
-        # appear immediately instead of waiting for global command propagation.
         synced_global = await bot.tree.sync()
         print(f"Synced {len(synced_global)} global slash commands.")
-        # Clear old guild-specific copies of global commands to prevent duplicates.
-        # Commands are registered globally only; do not copy them into each guild.
-        for guild in bot.guilds:
-            try:
-                guild_object = discord.Object(id=guild.id)
-                synced_guild = await bot.tree.sync(guild=guild_object)
-                print(f"Cleaned up {len(synced_guild)} guild-specific slash commands for {guild.name} ({guild.id}).")
-            except Exception as guild_error:
-                print(f"Guild slash-command cleanup failed for {guild.id} ({guild.name}): {guild_error}")
     except Exception as e:
-        print(f"Global slash-command sync error: {e}")
+        print(f"Global slash-command sync error: {type(e).__name__}: {e}")
+
+    for guild in bot.guilds:
+        try:
+            guild_object = discord.Object(id=guild.id)
+            bot.tree.copy_global_to(guild=guild_object)
+            synced_guild = await bot.tree.sync(guild=guild_object)
+            names = ", ".join(command.name for command in synced_guild)
+            print(f"Synced {len(synced_guild)} guild slash commands for {guild.name} ({guild.id}): {names}")
+        except Exception as guild_error:
+            print(f"Guild slash-command sync failed for {guild.id} ({guild.name}): {type(guild_error).__name__}: {guild_error}")
 
 @bot.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
