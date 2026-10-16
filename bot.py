@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from threading import Thread
 from flask import Flask
+from league_system import setup_league
 
 # ==============================================================================
 # TOUCHLINE / FIFA VALT DISCORD BOT - EXTENDED BUILD
@@ -1998,6 +1999,9 @@ async def send_configured_log(guild: discord.Guild, log_type: str, embed: discor
             except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
                 return
         if hasattr(channel, "send"):
+            embed.color = discord.Color(0xFF9ED2)
+            if not embed.footer or not embed.footer.text:
+                embed.set_footer(text="🌸 FIFA VAULT • AUDIT LOG")
             await channel.send(embed=embed)
     except Exception as e:
         print(f"Logging error ({log_type}): {e}")
@@ -4320,6 +4324,10 @@ async def unlock_channel(ctx):
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         return
+    if isinstance(error, commands.CommandOnCooldown):
+        remaining = max(1, int(error.retry_after + 0.99))
+        await ctx.send(embed=discord.Embed(title="⏳・**__انتظر قليلًا__**", description=f"يمكنك استخدام أمر جدول الدوري مرة أخرى بعد **{remaining} ثانية**.", color=discord.Color(0xFF9ED2)))
+        return
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send(bold_msg(f"المعامل ناقص: `{error.param.name}`.", "⚠️"))
         return
@@ -4413,6 +4421,12 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
                 return False
         try:
+            embed.color = discord.Color(0xFF9ED2)
+            old_footer = embed.footer.text if embed.footer and embed.footer.text else ""
+            footer = "🌸 FIFA VAULT • SECURITY LOG"
+            if old_footer and "FIFA VAULT" not in old_footer:
+                footer = f"{footer} • {old_footer}"
+            embed.set_footer(text=footer[:2048])
             await channel.send(embed=embed, view=view)
             return True
         except (discord.Forbidden, discord.HTTPException, AttributeError):
@@ -5167,6 +5181,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
 
 async def main():
     async with bot:
+        await setup_league(bot, MY_DISCORD_ID, ALLOWED_ROLE_IDS)
         await setup_security(bot, MY_DISCORD_ID, load_server_config, save_server_config)
         if BOT_TOKEN:
             await bot.start(BOT_TOKEN)
@@ -5176,3 +5191,4 @@ async def main():
 if __name__ == "__main__":
     keep_alive()
     asyncio.run(main())
+
