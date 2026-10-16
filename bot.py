@@ -2052,16 +2052,18 @@ async def set_roleslog(interaction: discord.Interaction, channel: discord.TextCh
 # ==============================================================================
 # Events
 # ==============================================================================
+# Slash commands are registered per-guild only to avoid global/guild duplicates.
+_slash_commands_synced = False
+
 @bot.event
 async def on_ready():
+    global _slash_commands_synced
     print(f"✅ Bot Online as: {bot.user}")
-    # Register globally, and copy/sync commands to each connected guild for immediate visibility.
-    try:
-        synced_global = await bot.tree.sync()
-        print(f"Synced {len(synced_global)} global slash commands.")
-    except Exception as e:
-        print(f"Global slash-command sync error: {type(e).__name__}: {e}")
+    if _slash_commands_synced:
+        print("Slash commands already synced for this process; skipping duplicate sync.")
+        return
 
+    # Publish commands to each guild first for immediate visibility.
     for guild in bot.guilds:
         try:
             guild_object = discord.Object(id=guild.id)
@@ -2071,6 +2073,16 @@ async def on_ready():
             print(f"Synced {len(synced_guild)} guild slash commands for {guild.name} ({guild.id}): {names}")
         except Exception as guild_error:
             print(f"Guild slash-command sync failed for {guild.id} ({guild.name}): {type(guild_error).__name__}: {guild_error}")
+
+    # Remove global copies so each slash command is only registered once.
+    try:
+        bot.tree.clear_commands(guild=None)
+        synced_global = await bot.tree.sync()
+        print(f"Global duplicate cleanup complete; {len(synced_global)} global commands remain.")
+    except Exception as e:
+        print(f"Global duplicate cleanup error: {type(e).__name__}: {e}")
+
+    _slash_commands_synced = True
 
 @bot.event
 async def on_raw_message_delete(payload: discord.RawMessageDeleteEvent):
