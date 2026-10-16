@@ -4421,6 +4421,12 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
             except (discord.NotFound, discord.Forbidden, discord.HTTPException, ValueError):
                 return False
         try:
+            embed.color = discord.Color(0xFF9ED2)
+            old_footer = embed.footer.text if embed.footer and embed.footer.text else ""
+            footer = "🌸 FIFA VAULT • SECURITY LOG"
+            if old_footer and "FIFA VAULT" not in old_footer:
+                footer = f"{footer} • {old_footer}"
+            embed.set_footer(text=footer[:2048])
             await channel.send(embed=embed, view=view)
             return True
         except (discord.Forbidden, discord.HTTPException, AttributeError):
