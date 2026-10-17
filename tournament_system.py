@@ -386,7 +386,7 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         if not is_admin(interaction.user):
             await reply(interaction, "🔒 صلاحيات غير كافية", "تسجيل نتائج البطولة متاح للمالك والرتبتين المصرح لهما فقط.")
             return
-        parsed = re.fullmatch(r"\\s*(\\d{1,2})\\s*[-–:]\\s*(\\d{1,2})\\s*", score)
+        parsed = re.fullmatch(r"\s*(\d{1,2})\s*[-–:]\s*(\d{1,2})\s*", score)
         if not parsed or team1.id == team2.id:
             await reply(interaction, "⚠️ نتيجة غير صحيحة", "استخدم /تسجيل_نتيجة واختر فريقين مختلفين وأدخل نتيجة مثل 7-6.")
             return
@@ -430,12 +430,12 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         await save_all(data)
         desc = f"{safe_name(m['team1_name'])} **{m['score1']} — {m['score2']}** {safe_name(m['team2_name'])}"
         if m.get("winner_name"):
-            desc += "\\n🏆 الفائز: " + safe_name(m["winner_name"])
+            desc += "\n🏆 الفائز: " + safe_name(m["winner_name"])
         if transition:
-            desc += "\\n\\n" + transition
+            desc += "\n\n" + transition
         nxt = current_round(t)
         if nxt and t.get("status") == "active":
-            desc += "\\n\\nالجولة الحالية: **" + nxt["name"] + "**. استخدم /موجهات لعرضها."
+            desc += "\n\nالجولة الحالية: **" + nxt["name"] + "**. استخدم /موجهات لعرضها."
         await interaction.response.send_message(embed=embed("✅ تم اعتماد نتيجة البطولة", desc))
 
     @bot.tree.command(name="موجهات", description="عرض المواجهات المتبقية في الجولة الحالية")
@@ -460,7 +460,7 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         else:
             lines = ["اكتملت هذه الجولة."]
             title = "📋 " + t["name"] + " • " + rnd["name"]
-        await interaction.response.send_message(embed=embed(title, "\\n".join(lines)[:4000]))
+        await interaction.response.send_message(embed=embed(title, "\n".join(lines)[:4000]))
 
     class MatchesView(discord.ui.View):
         def __init__(self, guild, t, user_id):
@@ -484,8 +484,8 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         def make_embed(self):
             start = self.page*self.per_page
             subset = self.items[start:start+self.per_page]
-            lines = [f"**{stage}**\\n{match_text(self.guild, m, start+i+1)}" for i, (stage, m) in enumerate(subset)]
-            e = embed("🗂️ " + self.t["name"] + " • سجل المواجهات", "\\n\\n".join(lines)[:4000] or "لم تُنشأ مواجهات بعد.")
+            lines = [f"**{stage}**\n{match_text(self.guild, m, start+i+1)}" for i, (stage, m) in enumerate(subset)]
+            e = embed("🗂️ " + self.t["name"] + " • سجل المواجهات", "\n\n".join(lines)[:4000] or "لم تُنشأ مواجهات بعد.")
             e.set_footer(text=f"FIFA VAULT • صفحة {self.page+1}/{self.max_page} • {len(self.items)} مواجهة")
             return e
 
