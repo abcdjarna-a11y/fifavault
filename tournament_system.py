@@ -248,6 +248,9 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         if not name or len(name) > 80:
             await reply(interaction, "⚠️ اسم غير صالح", "اكتب اسمًا من 1 إلى 80 حرفًا.")
             return
+        if format_type.value == "knockout" and int(team_count.value) == 12:
+            await reply(interaction, "⚠️ عدد الفرق غير مدعوم للإقصائي", "نظام الإقصائي المباشر متاح لـ 4 أو 8 أو 16 فريقًا. اختر نظام المجموعات + الإقصائي إذا كان العدد 12.")
+            return
         data, state = await get_state(interaction.guild.id)
         old = state.get("active")
         if old and old.get("status") != "completed":
