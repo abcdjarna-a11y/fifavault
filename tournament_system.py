@@ -377,36 +377,46 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         await interaction.response.send_message(embed=embed("🚀 بدأت البطولة • " + t["name"],
             desc + "\nاستخدم موجهات لعرض الجولة الحالية، ومواجهات_البطولة لتصفح كل المباريات."))
 
-    @bot.command(name="تسجيل_نتيجة")
-    async def record(ctx, team1: discord.Role = None, score: str = None, team2: discord.Role = None):
-        if not ctx.guild:
+    @bot.tree.command(name="تسجيل_نتيجة", description="تسجيل نتيجة مواجهة في البطولة الحالية")
+    @app_commands.describe(team1="الفريق الأول", score="النتيجة مثل 7-6", team2="الفريق الثاني")
+    async def record(interaction: discord.Interaction, team1: discord.Role, score: str, team2: discord.Role):
+        if not interaction.guild:
+            await reply(interaction, "⚠️ داخل السيرفر فقط", "استخدم الأمر داخل السيرفر.")
             return
-        if not is_admin(ctx.author):
-            await ctx.send(embed=embed("🔒 صلاحيات غير كافية", "تسجيل نتائج البطولة متاح للمالك والرتبتين المصرح لهما فقط.")); return
-        if team1 is None or score is None or team2 is None:
-            await ctx.send(embed=embed("⚠️ صيغة النتيجة", "استخدم: تسجيل_نتيجة @الفريق1 7-6 @الفريق2")); return
-        parsed = re.fullmatch(r"\s*(\d{1,2})\s*[-–:]\s*(\d{1,2})\s*", score)
+        if not is_admin(interaction.user):
+            await reply(interaction, "🔒 صلاحيات غير كافية", "تسجيل نتائج البطولة متاح للمالك والرتبتين المصرح لهما فقط.")
+            return
+        parsed = re.fullmatch(r"\\s*(\\d{1,2})\\s*[-–:]\\s*(\\d{1,2})\\s*", score)
         if not parsed or team1.id == team2.id:
-            await ctx.send(embed=embed("⚠️ نتيجة غير صحيحة", "استخدم تسجيل_نتيجة @الفريق1 7-6 @الفريق2 مع فريقين مختلفين.")); return
+            await reply(interaction, "⚠️ نتيجة غير صحيحة", "استخدم /تسجيل_نتيجة واختر فريقين مختلفين وأدخل نتيجة مثل 7-6.")
+            return
         sa, sb = int(parsed.group(1)), int(parsed.group(2))
-        data = await load_all(); state = state_for(data, ctx.guild.id); t = state.get("active")
+        data = await load_all()
+        state = state_for(data, interaction.guild.id)
+        t = state.get("active")
         if not t or t.get("status") != "active":
-            await ctx.send(embed=embed("⚠️ لا توجد بطولة جارية", "أنشئ بطولة وابدأها أولًا.")); return
+            await reply(interaction, "⚠️ لا توجد بطولة جارية", "أنشئ بطولة وابدأها أولًا.")
+            return
         rnd = current_round(t)
         if not rnd:
-            await ctx.send(embed=embed("⚠️ لا توجد جولة نشطة", "لا توجد جولة حالية.")); return
+            await reply(interaction, "⚠️ لا توجد جولة نشطة", "لا توجد جولة حالية.")
+            return
         m = next((x for x in rnd["matches"] if {int(x["team1_id"]), int(x["team2_id"])} == {team1.id, team2.id}), None)
         if not m:
-            await ctx.send(embed=embed("⚠️ المواجهة غير موجودة", f"الفريقان ليسا ضمن {rnd['name']}. استخدم أمر موجهات.")); return
+            await reply(interaction, "⚠️ المواجهة غير موجودة", f"الفريقان ليسا ضمن {rnd['name']}. استخدم /موجهات.")
+            return
         if m.get("status") == "completed":
-            await ctx.send(embed=embed("⚠️ النتيجة مسجلة", "هذه المواجهة تم اعتماد نتيجتها مسبقًا.")); return
+            await reply(interaction, "⚠️ النتيجة مسجلة", "هذه المواجهة تم اعتماد نتيجتها مسبقًا.")
+            return
         if not rnd.get("group_stage") and sa == sb:
-            await ctx.send(embed=embed("⚠️ تعادل غير مسموح", "مباريات الإقصائيات تحتاج فائزًا. أدخل نتيجة الحسم بعد ركلات الترجيح.")); return
+            await reply(interaction, "⚠️ تعادل غير مسموح", "مباريات الإقصائيات تحتاج فائزًا. أدخل نتيجة الحسم بعد ركلات الترجيح.")
+            return
         if int(m["team1_id"]) == team1.id:
             m["score1"], m["score2"] = sa, sb
         else:
             m["score1"], m["score2"] = sb, sa
-        m["status"] = "completed"; m["recorded_by"] = ctx.author.id
+        m["status"] = "completed"
+        m["recorded_by"] = interaction.user.id
         m["recorded_at"] = discord.utils.utcnow().isoformat()
         if int(m["score1"]) != int(m["score2"]):
             m["winner_name"] = m["team1_name"] if int(m["score1"]) > int(m["score2"]) else m["team2_name"]
@@ -420,40 +430,50 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         await save_all(data)
         desc = f"{safe_name(m['team1_name'])} **{m['score1']} — {m['score2']}** {safe_name(m['team2_name'])}"
         if m.get("winner_name"):
-            desc += "\n🏆 الفائز: " + safe_name(m["winner_name"])
+            desc += "\\n🏆 الفائز: " + safe_name(m["winner_name"])
         if transition:
-            desc += "\n\n" + transition
+            desc += "\\n\\n" + transition
         nxt = current_round(t)
         if nxt and t.get("status") == "active":
-            desc += "\n\nالجولة الحالية: **" + nxt["name"] + "**. استخدم موجهات لعرضها."
-        await ctx.send(embed=embed("✅ تم اعتماد نتيجة البطولة", desc))
+            desc += "\\n\\nالجولة الحالية: **" + nxt["name"] + "**. استخدم /موجهات لعرضها."
+        await interaction.response.send_message(embed=embed("✅ تم اعتماد نتيجة البطولة", desc))
 
-    @bot.command(name="موجهات")
-    async def fixtures(ctx):
-        if not ctx.guild: return
-        data = await load_all(); t = state_for(data, ctx.guild.id).get("active")
+    @bot.tree.command(name="موجهات", description="عرض المواجهات المتبقية في الجولة الحالية")
+    async def fixtures(interaction: discord.Interaction):
+        if not interaction.guild:
+            await reply(interaction, "⚠️ داخل السيرفر فقط", "استخدم الأمر داخل السيرفر.")
+            return
+        data = await load_all()
+        t = state_for(data, interaction.guild.id).get("active")
         if not t:
-            await ctx.send(embed=embed("📭 لا توجد بطولة", "لا توجد بطولة حالية.")); return
+            await reply(interaction, "📭 لا توجد بطولة", "لا توجد بطولة حالية.")
+            return
         rnd = current_round(t)
         if not rnd:
             desc = "🏆 انتهت البطولة." if t.get("status") == "completed" else "لم تبدأ البطولة بعد."
-            await ctx.send(embed=embed("📋 " + t["name"], desc)); return
+            await reply(interaction, "📋 " + t["name"], desc)
+            return
         pending = [m for m in rnd["matches"] if m.get("status") != "completed"]
         if pending:
-            lines = [match_text(ctx.guild, m, i+1) for i, m in enumerate(pending)]
+            lines = [match_text(interaction.guild, m, i+1) for i, m in enumerate(pending)]
             title = "📋 " + t["name"] + " • " + rnd["name"] + " • المواجهات المتبقية"
         else:
             lines = ["اكتملت هذه الجولة."]
             title = "📋 " + t["name"] + " • " + rnd["name"]
-        await ctx.send(embed=embed(title, "\n".join(lines)[:4000]))
+        await interaction.response.send_message(embed=embed(title, "\\n".join(lines)[:4000]))
 
     class MatchesView(discord.ui.View):
         def __init__(self, guild, t, user_id):
             super().__init__(timeout=300)
-            self.guild = guild; self.t = t; self.user_id = user_id; self.page = 0; self.per_page = 5
+            self.guild = guild
+            self.t = t
+            self.user_id = user_id
+            self.page = 0
+            self.per_page = 5
             self.items = [(r["name"], m) for r in t.get("rounds", []) for m in r.get("matches", [])]
             self.max_page = max(1, (len(self.items)+self.per_page-1)//self.per_page)
-            self.prev.disabled = True; self.next.disabled = self.max_page <= 1
+            self.prev.disabled = True
+            self.next.disabled = self.max_page <= 1
 
         async def interaction_check(self, interaction):
             if interaction.user.id != self.user_id:
@@ -464,8 +484,8 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         def make_embed(self):
             start = self.page*self.per_page
             subset = self.items[start:start+self.per_page]
-            lines = [f"**{stage}**\n{match_text(self.guild, m, start+i+1)}" for i, (stage, m) in enumerate(subset)]
-            e = embed("🗂️ " + self.t["name"] + " • سجل المواجهات", "\n\n".join(lines)[:4000] or "لم تُنشأ مواجهات بعد.")
+            lines = [f"**{stage}**\\n{match_text(self.guild, m, start+i+1)}" for i, (stage, m) in enumerate(subset)]
+            e = embed("🗂️ " + self.t["name"] + " • سجل المواجهات", "\\n\\n".join(lines)[:4000] or "لم تُنشأ مواجهات بعد.")
             e.set_footer(text=f"FIFA VAULT • صفحة {self.page+1}/{self.max_page} • {len(self.items)} مواجهة")
             return e
 
@@ -475,22 +495,28 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
 
         @discord.ui.button(label="⬅️", style=discord.ButtonStyle.secondary)
         async def prev(self, interaction: discord.Interaction, button: discord.ui.Button):
-            self.page -= 1; self.sync()
+            self.page -= 1
+            self.sync()
             await interaction.response.edit_message(embed=self.make_embed(), view=self)
 
         @discord.ui.button(label="➡️", style=discord.ButtonStyle.secondary)
         async def next(self, interaction: discord.Interaction, button: discord.ui.Button):
-            self.page += 1; self.sync()
+            self.page += 1
+            self.sync()
             await interaction.response.edit_message(embed=self.make_embed(), view=self)
 
-    @bot.command(name="مواجهات_البطولة")
-    async def all_fixtures(ctx):
-        if not ctx.guild: return
-        data = await load_all(); t = state_for(data, ctx.guild.id).get("active")
+    @bot.tree.command(name="مواجهات_البطولة", description="عرض جميع مواجهات البطولة مع صفحات للتنقل")
+    async def all_fixtures(interaction: discord.Interaction):
+        if not interaction.guild:
+            await reply(interaction, "⚠️ داخل السيرفر فقط", "استخدم الأمر داخل السيرفر.")
+            return
+        data = await load_all()
+        t = state_for(data, interaction.guild.id).get("active")
         if not t:
-            await ctx.send(embed=embed("📭 لا توجد بطولة", "لا توجد بطولة حالية.")); return
-        view = MatchesView(ctx.guild, t, ctx.author.id)
-        await ctx.send(embed=view.make_embed(), view=view)
+            await reply(interaction, "📭 لا توجد بطولة", "لا توجد بطولة حالية.")
+            return
+        view = MatchesView(interaction.guild, t, interaction.user.id)
+        await interaction.response.send_message(embed=view.make_embed(), view=view)
 
     @bot.tree.command(name="سجل_الأبطال", description="عرض سجل أبطال البطولات السابقة")
     async def champions(interaction: discord.Interaction):
