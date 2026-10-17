@@ -297,23 +297,40 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         await save_all(data)
         await reply(interaction, "🗑️ تمت الإزالة", f"تمت إزالة {team_role.mention}. المتبقي {len(t['teams'])}/{t['team_count']}.")
 
-    @bot.tree.command(name="تبديل_الفرق", description="استبدال فريق منسحب بفريق بديل قبل بدء البطولة")
+    @bot.tree.command(name="تبديل_الفرق", description="استبدال فريق منسحب بفريق بديل")
     @app_commands.describe(old_team="الفريق المسجل الذي انسحب", new_team="رتبة الفريق البديل")
     async def swap_teams(interaction: discord.Interaction, old_team: discord.Role, new_team: discord.Role):
         if not interaction.guild or not is_admin(interaction.user):
             await reply(interaction, "🔒 صلاحيات غير كافية", "الأمر متاح للمالك والرتبتين المصرح لهما فقط.")
             return
         data, state = await get_state(interaction.guild.id); t = state.get("active")
-        if not t or t["status"] != "registration":
-            await reply(interaction, "⚠️ لا يمكن التبديل الآن", "التبديل متاح قبل بدء البطولة حتى لا تتغير نتائج ومواجهات قائمة.")
+        if not t or t.get("status") not in {"registration", "active"}:
+            await reply(interaction, "⚠️ لا يمكن التبديل الآن", "لا توجد بطولة تستقبل التبديل.")
             return
         idx = next((i for i, x in enumerate(t["teams"]) if int(x["role_id"]) == old_team.id), None)
-        if idx is None or any(int(x["role_id"]) == new_team.id for x in t["teams"]) or old_team.id == new_team.id:
-            await reply(interaction, "⚠️ تعذر التبديل", "تأكد أن الفريق القديم مسجل وأن الفريق البديل مختلف وغير مسجل.")
+        if idx is None or old_team.id == new_team.id or any(int(x["role_id"]) == new_team.id for x in t["teams"]):
+            await reply(interaction, "⚠️ تعذر التبديل", "تأكد أن الفريق القديم مسجل وأن البديل مختلف وغير مسجل.")
             return
+        if t.get("status") == "active":
+            already_played = any(m.get("status") == "completed" and old_team.id in {int(m["team1_id"]), int(m["team2_id"])}
+                                 for rnd in t.get("rounds", []) for m in rnd.get("matches", []))
+            if already_played:
+                await reply(interaction, "⚠️ الفريق شارك بالفعل", "لا يمكن استبدال فريق بعد تسجيل نتيجة له، لأن ذلك سيغيّر نزاهة الجدول والنتائج.")
+                return
         t["teams"][idx] = {"role_id": new_team.id, "name": new_team.name}
+        for group_teams in t.get("groups", {}).values():
+            for i, team in enumerate(group_teams):
+                if int(team["role_id"]) == old_team.id:
+                    group_teams[i] = {"role_id": new_team.id, "name": new_team.name}
+        for rnd in t.get("rounds", []):
+            for m in rnd.get("matches", []):
+                if m.get("status") != "completed":
+                    if int(m["team1_id"]) == old_team.id:
+                        m["team1_id"], m["team1_name"] = new_team.id, new_team.name
+                    if int(m["team2_id"]) == old_team.id:
+                        m["team2_id"], m["team2_name"] = new_team.id, new_team.name
         await save_all(data)
-        await reply(interaction, "🔁 تم تبديل الفريق", f"تم استبدال {old_team.mention} بـ {new_team.mention}.")
+        await reply(interaction, "🔁 تم تبديل الفريق", f"تم استبدال {old_team.mention} بـ {new_team.mention}. تم تحديث المواجهات غير الملعوبة فقط.") 
 
     @bot.tree.command(name="بدء_البطولة", description="بدء البطولة وإنشاء القرعة عشوائيًا")
     async def start(interaction: discord.Interaction):
@@ -418,8 +435,14 @@ async def setup_tournaments(bot, owner_id, owner_role_ids):
         if not rnd:
             desc = "🏆 انتهت البطولة." if t.get("status") == "completed" else "لم تبدأ البطولة بعد."
             await ctx.send(embed=embed("📋 " + t["name"], desc)); return
-        lines = [match_text(ctx.guild, m, i+1) for i, m in enumerate(rnd["matches"])]
-        await ctx.send(embed=embed("📋 " + t["name"] + " • " + rnd["name"], "\n".join(lines)[:4000]))
+        pending = [m for m in rnd["matches"] if m.get("status") != "completed"]
+        if pending:
+            lines = [match_text(ctx.guild, m, i+1) for i, m in enumerate(pending)]
+            title = "📋 " + t["name"] + " • " + rnd["name"] + " • المواجهات المتبقية"
+        else:
+            lines = ["اكتملت هذه الجولة."]
+            title = "📋 " + t["name"] + " • " + rnd["name"]
+        await ctx.send(embed=embed(title, "\n".join(lines)[:4000]))
 
     class MatchesView(discord.ui.View):
         def __init__(self, guild, t, user_id):
