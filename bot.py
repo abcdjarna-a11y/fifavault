@@ -15,6 +15,7 @@ import urllib.request
 from threading import Thread
 from flask import Flask
 from league_system import setup_league
+from tournament_system import setup_tournaments
 
 # ==============================================================================
 # TOUCHLINE / FIFA VALT DISCORD BOT - EXTENDED BUILD
@@ -5194,6 +5195,7 @@ async def setup_security(bot, owner_id, load_server_config, save_server_config):
 async def main():
     async with bot:
         await setup_league(bot, MY_DISCORD_ID, ALLOWED_ROLE_IDS)
+        await setup_tournaments(bot, MY_DISCORD_ID, ALLOWED_ROLE_IDS)
         await setup_security(bot, MY_DISCORD_ID, load_server_config, save_server_config)
         if BOT_TOKEN:
             await bot.start(BOT_TOKEN)
